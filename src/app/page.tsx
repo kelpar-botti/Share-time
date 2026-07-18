@@ -1,16 +1,14 @@
 import Link from "next/link";
-import { getActiveBookingsForDateRange } from "@/lib/bookings";
+import { getActiveBookingsForDateRange, splitBookingMinutesByDate } from "@/lib/bookings";
 import {
   addDays,
   addMonths,
-  BUSINESS_HOURS,
   buildMonthGrid,
   currentMonthInJapan,
   formatJapaneseMonth,
   getMonthDateRange,
   isValidMonthString,
   MAX_DAYS_AHEAD,
-  timeToMinutes,
   todayInJapan,
   WEEKDAYS_JA,
 } from "@/lib/date";
@@ -38,14 +36,17 @@ export default async function HomePage({ searchParams }: Props) {
 
   const weeks = buildMonthGrid(month);
   const [firstDay, lastDay] = getMonthDateRange(month);
-  const bookings = await getActiveBookingsForDateRange(firstDay, lastDay);
+  // Extend the fetch one day earlier than the grid so an overnight booking
+  // that started the day before firstDay still counts toward firstDay.
+  const bookings = await getActiveBookingsForDateRange(addDays(firstDay, -1), lastDay);
 
   const minutesByDate = new Map<string, number>();
   for (const b of bookings) {
-    const duration = timeToMinutes(b.endTime) - timeToMinutes(b.startTime);
-    minutesByDate.set(b.date, (minutesByDate.get(b.date) ?? 0) + duration);
+    for (const { date, minutes } of splitBookingMinutesByDate(b)) {
+      minutesByDate.set(date, (minutesByDate.get(date) ?? 0) + minutes);
+    }
   }
-  const businessMinutesPerDay = (BUSINESS_HOURS.endHour - BUSINESS_HOURS.startHour) * 60;
+  const minutesPerDay = 24 * 60;
 
   const canGoPrevMonth = month > currentMonthInJapan();
   const canGoNextMonth = month < maxMonth;
@@ -103,7 +104,7 @@ export default async function HomePage({ searchParams }: Props) {
               {week.map((date, dayIndex) => {
                 if (!date) return <td key={dayIndex} />;
                 const dayNumber = Number(date.slice(-2));
-                const ratio = (minutesByDate.get(date) ?? 0) / businessMinutesPerDay;
+                const ratio = (minutesByDate.get(date) ?? 0) / minutesPerDay;
                 const isToday = date === today;
                 return (
                   <td key={dayIndex} className="p-0">

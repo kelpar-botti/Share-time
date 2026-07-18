@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { submitBookingRequest } from "@/lib/actions";
-import { getActiveBookingsForDate } from "@/lib/bookings";
+import { getBookingsVisibleOnDate } from "@/lib/bookings";
 import { formatJapaneseDate, generateTimeOptions, isValidDateString } from "@/lib/date";
 
 type Props = {
@@ -11,7 +11,7 @@ type Props = {
 const ERROR_MESSAGES: Record<string, string> = {
   missing: "お名前と内容は必須です。入力をご確認ください。",
   email: "メールアドレスの形式が正しくありません。",
-  range: "終了時刻は開始時刻より後に設定してください。",
+  range: "開始時刻と終了時刻が同じです。時間を変えてください。",
   taken: "その時間帯は他の予約と重なっています。別の時間をお選びください。",
 };
 
@@ -23,8 +23,7 @@ export default async function BookPage({ searchParams }: Props) {
   }
 
   const times = generateTimeOptions();
-  const existing = await getActiveBookingsForDate(date);
-  const sortedExisting = [...existing].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const visible = await getBookingsVisibleOnDate(date);
   const errorMessage = error ? ERROR_MESSAGES[error] : undefined;
 
   return (
@@ -33,15 +32,21 @@ export default async function BookPage({ searchParams }: Props) {
         ← 予約状況に戻る
       </Link>
       <h1 className="text-xl font-bold mt-3 mb-1">予約を申請する</h1>
-      <p className="text-gray-600 mb-6">{formatJapaneseDate(date)}</p>
+      <p className="text-gray-600 mb-1">{formatJapaneseDate(date)}</p>
+      <p className="text-xs text-gray-400 mb-6">
+        24時間いつでも申請できます。日をまたぐ場合は、終了時刻に開始時刻より早い時間（翌日分）を選んでください（例:
+        22:00〜02:00）。
+      </p>
 
-      {sortedExisting.length > 0 && (
+      {visible.length > 0 && (
         <div className="mb-4 text-sm text-gray-500 rounded border border-gray-200 bg-gray-50 px-3 py-2">
           <p className="mb-1">既に予約が入っている時間帯:</p>
           <ul className="list-disc list-inside">
-            {sortedExisting.map((b) => (
+            {visible.map((b) => (
               <li key={b.id}>
-                {b.startTime}〜{b.endTime}
+                {b.carriesFromPreviousDay ? "00:00" : b.startTime}〜{b.endTime}
+                {b.spillsIntoNextDay && !b.carriesFromPreviousDay && "（翌日まで）"}
+                {b.carriesFromPreviousDay && "（前日から）"}
               </li>
             ))}
           </ul>

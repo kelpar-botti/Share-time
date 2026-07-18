@@ -1,7 +1,7 @@
 import "server-only";
 import { randomBytes } from "crypto";
 import { getDb } from "./firebase-admin";
-import { timeToMinutes } from "./date";
+import { addDays, crossesMidnight, timeToMinutes, toAbsoluteMinutes } from "./date";
 import type { Booking, BookingSource, BookingStatus } from "./types";
 
 const COLLECTION = "bookings";
@@ -34,8 +34,30 @@ function docToBooking(
   };
 }
 
-function rangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
-  return timeToMinutes(aStart) < timeToMinutes(bEnd) && timeToMinutes(bStart) < timeToMinutes(aEnd);
+type TimeRangeLike = { date: string; startTime: string; endTime: string };
+
+/** Absolute [start, end) in minutes since a fixed epoch, rolling into the next day if the range crosses midnight. */
+function toAbsoluteRange(r: TimeRangeLike): [number, number] {
+  const start = toAbsoluteMinutes(r.date, r.startTime);
+  const end = toAbsoluteMinutes(r.date, r.endTime);
+  return [start, end <= start ? end + 24 * 60 : end];
+}
+
+function rangesOverlap(a: TimeRangeLike, b: TimeRangeLike): boolean {
+  const [aStart, aEnd] = toAbsoluteRange(a);
+  const [bStart, bEnd] = toAbsoluteRange(b);
+  return aStart < bEnd && bStart < aEnd;
+}
+
+/** Splits a booking's duration across the calendar date(s) it actually occupies (two if it crosses midnight). */
+export function splitBookingMinutesByDate(b: TimeRangeLike): { date: string; minutes: number }[] {
+  if (!crossesMidnight(b.startTime, b.endTime)) {
+    return [{ date: b.date, minutes: timeToMinutes(b.endTime) - timeToMinutes(b.startTime) }];
+  }
+  return [
+    { date: b.date, minutes: 24 * 60 - timeToMinutes(b.startTime) },
+    { date: addDays(b.date, 1), minutes: timeToMinutes(b.endTime) },
+  ];
 }
 
 /**
@@ -65,14 +87,48 @@ export async function getActiveBookingsForDateRange(
   return snap.docs.map(docToBooking).filter((b) => BLOCKING_STATUSES.includes(b.status));
 }
 
-/** Whether [startTime, endTime) is free of any pending/approved booking on that date. */
+/**
+ * Whether [date startTime, endTime) is free of any pending/approved booking.
+ * A booking can cross at most one midnight (see `crossesMidnight`), so any
+ * conflict must involve a booking starting the day before, the same day, or
+ * the day after — that 3-day window is all this needs to check.
+ */
 export async function isRangeAvailable(
   date: string,
   startTime: string,
   endTime: string
 ): Promise<boolean> {
-  const active = await getActiveBookingsForDate(date);
-  return !active.some((b) => rangesOverlap(b.startTime, b.endTime, startTime, endTime));
+  const nearby = await getActiveBookingsForDateRange(addDays(date, -1), addDays(date, 1));
+  const candidate: TimeRangeLike = { date, startTime, endTime };
+  return !nearby.some((b) => rangesOverlap(b, candidate));
+}
+
+export interface VisibleBooking extends Booking {
+  /** Started the previous day and spills into this date's early hours. */
+  carriesFromPreviousDay: boolean;
+  /** Starts this date but doesn't end until after midnight. */
+  spillsIntoNextDay: boolean;
+}
+
+/** Bookings a visitor viewing `date` needs to see, including overnight carryover from the day before. */
+export async function getBookingsVisibleOnDate(date: string): Promise<VisibleBooking[]> {
+  const [todays, prevs] = await Promise.all([
+    getActiveBookingsForDate(date),
+    getActiveBookingsForDate(addDays(date, -1)),
+  ]);
+
+  const carryovers: VisibleBooking[] = prevs
+    .filter((b) => crossesMidnight(b.startTime, b.endTime))
+    .map((b) => ({ ...b, carriesFromPreviousDay: true, spillsIntoNextDay: false }));
+
+  const current: VisibleBooking[] = todays.map((b) => ({
+    ...b,
+    carriesFromPreviousDay: false,
+    spillsIntoNextDay: crossesMidnight(b.startTime, b.endTime),
+  }));
+
+  const displayStart = (b: VisibleBooking) => (b.carriesFromPreviousDay ? 0 : timeToMinutes(b.startTime));
+  return [...carryovers, ...current].sort((a, b) => displayStart(a) - displayStart(b));
 }
 
 export async function createBookingRequest(input: {

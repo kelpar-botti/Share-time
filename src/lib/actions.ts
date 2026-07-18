@@ -22,7 +22,6 @@ import {
   MAX_DAYS_AHEAD,
   MAX_SCHEDULE_RANGE_DAYS,
   OWNER_MAX_DAYS_AHEAD,
-  timeToMinutes,
 } from "./date";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -81,7 +80,7 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
   ) {
     redirect(`/book?date=${encodeURIComponent(date)}`);
   }
-  if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+  if (startTime === endTime) {
     backToForm("range");
   }
 
@@ -159,7 +158,7 @@ export async function createOwnerScheduleBlocks(formData: FormData): Promise<voi
     !isValidTimeString(endTime) ||
     !validTimes.has(startTime) ||
     !validTimes.has(endTime) ||
-    timeToMinutes(endTime) <= timeToMinutes(startTime)
+    startTime === endTime
   ) {
     redirect(scheduleUrl("&error=time"));
   }

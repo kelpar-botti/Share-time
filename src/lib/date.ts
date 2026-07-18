@@ -123,9 +123,11 @@ export function buildMonthGrid(monthStr: string): (string | null)[][] {
   return weeks;
 }
 
+// Full 24-hour reception window by default. Kept as a named constant (rather
+// than hardcoding 24h everywhere) in case someone wants to restrict it later.
 export const BUSINESS_HOURS = {
-  startHour: 9,
-  endHour: 19,
+  startHour: 0,
+  endHour: 24,
 };
 
 export const TIME_STEP_MINUTES = 30;
@@ -135,15 +137,38 @@ export function timeToMinutes(time: string): number {
   return h * 60 + m;
 }
 
-/** Selectable start/end times, from opening to closing, at TIME_STEP_MINUTES intervals (inclusive of closing time). */
+/**
+ * Selectable start/end times at TIME_STEP_MINUTES intervals. For a full
+ * 24-hour window this yields 00:00..23:30 (no redundant 24:00/00:00
+ * duplicate) — a booking that "ends" at 00:00 is understood to end at
+ * midnight of the following day, see `crossesMidnight`.
+ */
 export function generateTimeOptions(): string[] {
   const times: string[] = [];
   const start = BUSINESS_HOURS.startHour * 60;
-  const end = BUSINESS_HOURS.endHour * 60;
-  for (let m = start; m <= end; m += TIME_STEP_MINUTES) {
-    const h = Math.floor(m / 60);
-    const mm = m % 60;
+  const span = (BUSINESS_HOURS.endHour - BUSINESS_HOURS.startHour) * 60;
+  const isFullDay = span >= 24 * 60;
+  const end = start + span;
+  for (let m = start; isFullDay ? m < end : m <= end; m += TIME_STEP_MINUTES) {
+    const wrapped = m % (24 * 60);
+    const h = Math.floor(wrapped / 60);
+    const mm = wrapped % 60;
     times.push(`${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`);
   }
   return times;
+}
+
+/** True when an end time at/before the start time means "ends the next day". */
+export function crossesMidnight(startTime: string, endTime: string): boolean {
+  return timeToMinutes(endTime) <= timeToMinutes(startTime);
+}
+
+function dayIndex(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / (24 * 60 * 60 * 1000));
+}
+
+/** Minutes since a fixed epoch — lets two (date, time) points be compared with plain arithmetic across day boundaries. */
+export function toAbsoluteMinutes(date: string, time: string): number {
+  return dayIndex(date) * 24 * 60 + timeToMinutes(time);
 }

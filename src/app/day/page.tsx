@@ -1,8 +1,7 @@
 import Link from "next/link";
-import { getActiveBookingsForDate } from "@/lib/bookings";
+import { getBookingsVisibleOnDate } from "@/lib/bookings";
 import {
   addDays,
-  BUSINESS_HOURS,
   daysFromToday,
   formatJapaneseDate,
   isValidDateString,
@@ -22,15 +21,12 @@ export default async function DayPage({ searchParams }: Props) {
   const date = isValidDateString(params.date) ? params.date : today;
   const offset = daysFromToday(date);
 
-  const activeBookings = await getActiveBookingsForDate(date);
-  const ranges = [...activeBookings].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const visible = await getBookingsVisibleOnDate(date);
 
   const prevDate = addDays(date, -1);
   const nextDate = addDays(date, 1);
   const canGoPrev = offset > 0;
   const canGoNext = offset < MAX_DAYS_AHEAD;
-  const openHour = String(BUSINESS_HOURS.startHour).padStart(2, "0");
-  const closeHour = String(BUSINESS_HOURS.endHour).padStart(2, "0");
 
   return (
     <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-8">
@@ -39,7 +35,7 @@ export default async function DayPage({ searchParams }: Props) {
       </Link>
       <h1 className="text-2xl font-bold mt-2 mb-1">予約状況</h1>
       <p className="text-sm text-gray-500 mb-6">
-        受付時間 {openHour}:00〜{closeHour}:00。空いている時間帯を選んで予約を申請できます。
+        24時間いつでも空いている時間帯を選んで予約を申請できます。
       </p>
 
       <div className="flex items-center justify-between mb-4">
@@ -71,19 +67,21 @@ export default async function DayPage({ searchParams }: Props) {
       </div>
 
       <div className="space-y-2 mb-6">
-        {ranges.length === 0 ? (
+        {visible.length === 0 ? (
           <p className="text-sm text-gray-500 rounded-lg border border-gray-200 bg-white px-4 py-3">
             この日はまだ予約が入っていません。
           </p>
         ) : (
-          ranges.map((b) => (
+          visible.map((b) => (
             <div
               key={b.id}
               className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-100 px-4 py-3 text-gray-500"
             >
               <span className="text-lg leading-none">×</span>
               <span>
-                {b.startTime}〜{b.endTime}　予約済み
+                {b.carriesFromPreviousDay ? "00:00" : b.startTime}〜{b.endTime}　予約済み
+                {b.spillsIntoNextDay && !b.carriesFromPreviousDay && "（翌日まで）"}
+                {b.carriesFromPreviousDay && "（前日から）"}
               </span>
             </div>
           ))
