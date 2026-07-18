@@ -8,11 +8,13 @@ import {
   currentMonthInJapan,
   formatJapaneseMonth,
   getMonthDateRange,
+  getWeekday,
   isValidMonthString,
   MAX_DAYS_AHEAD,
   todayInJapan,
   WEEKDAYS_JA,
 } from "@/lib/date";
+import { isJapaneseHoliday } from "@/lib/holidays";
 
 export const dynamic = "force-dynamic";
 
@@ -21,12 +23,25 @@ type Props = {
 };
 
 // Google Maps の混雑度表示のように、埋まっている割合が高いほど濃い青にする。
-function densityClass(ratio: number): string {
-  if (ratio <= 0) return "bg-white text-gray-700 border-gray-200";
-  if (ratio < 0.25) return "bg-blue-100 text-blue-900 border-blue-100";
-  if (ratio < 0.5) return "bg-blue-300 text-blue-950 border-blue-300";
-  if (ratio < 0.75) return "bg-blue-500 text-white border-blue-500";
-  return "bg-blue-700 text-white border-blue-700";
+// 背景色と文字色を別々に決めることで、日曜・祝日の赤文字をどの濃さの背景の上でも
+// 綺麗に重ねられるようにしている。
+function densityBgClass(ratio: number): string {
+  if (ratio <= 0) return "bg-white border-gray-200";
+  if (ratio < 0.25) return "bg-blue-100 border-blue-100";
+  if (ratio < 0.5) return "bg-blue-300 border-blue-300";
+  if (ratio < 0.75) return "bg-blue-500 border-blue-500";
+  return "bg-blue-700 border-blue-700";
+}
+
+function densityTextClass(ratio: number): string {
+  if (ratio <= 0) return "text-gray-700";
+  if (ratio < 0.25) return "text-blue-900";
+  if (ratio < 0.5) return "text-blue-950";
+  return "text-white"; // ratio >= 0.5 (blue-500/blue-700 backgrounds)
+}
+
+function holidayTextClass(ratio: number): string {
+  return ratio < 0.5 ? "text-red-600" : "text-red-200";
 }
 
 export default async function HomePage({ searchParams }: Props) {
@@ -92,8 +107,11 @@ export default async function HomePage({ searchParams }: Props) {
       <table className="w-full text-center text-sm border-separate border-spacing-1">
         <thead>
           <tr>
-            {WEEKDAYS_JA.map((w) => (
-              <th key={w} className="text-xs font-normal text-gray-400 pb-1">
+            {WEEKDAYS_JA.map((w, index) => (
+              <th
+                key={w}
+                className={`text-xs font-normal pb-1 ${index === 0 ? "text-red-500" : "text-gray-400"}`}
+              >
                 {w}
               </th>
             ))}
@@ -107,13 +125,15 @@ export default async function HomePage({ searchParams }: Props) {
                 const dayNumber = Number(date.slice(-2));
                 const ratio = (minutesByDate.get(date) ?? 0) / minutesPerDay;
                 const isToday = date === today;
+                const isRedDay = getWeekday(date) === 0 || isJapaneseHoliday(date);
+                const textClass = isRedDay ? holidayTextClass(ratio) : densityTextClass(ratio);
                 return (
                   <td key={dayIndex} className="p-0">
                     <Link
                       href={`/day?date=${date}`}
-                      className={`flex items-center justify-center rounded-lg border py-3 transition hover:opacity-80 ${densityClass(
+                      className={`flex items-center justify-center rounded-lg border py-3 transition hover:opacity-80 ${densityBgClass(
                         ratio
-                      )} ${isToday ? "ring-2 ring-offset-1 ring-blue-500" : ""}`}
+                      )} ${textClass} ${isToday ? "ring-2 ring-offset-1 ring-blue-500" : ""}`}
                     >
                       {dayNumber}
                     </Link>
