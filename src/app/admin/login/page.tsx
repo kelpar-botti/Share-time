@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { signIn } from "@/auth";
 
 export default function AdminLoginPage() {
@@ -20,6 +21,9 @@ export default function AdminLoginPage() {
           Googleでログイン
         </button>
       </form>
+      <Link href="/" className="block mt-6 text-sm text-blue-600 hover:underline">
+        ← 通常のページに戻る
+      </Link>
     </main>
   );
 }
