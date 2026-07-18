@@ -61,25 +61,43 @@ function PendingCard({ booking }: { booking: Booking }) {
     <li className="bg-white border border-gray-200 rounded-lg p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <BookingSummary booking={booking} />
-        <div className="flex gap-2 shrink-0">
-          <form action={approveBooking.bind(null, booking.id)}>
-            <button
-              type="submit"
-              className="px-3 py-1.5 rounded bg-green-600 text-white text-sm hover:bg-green-700"
-            >
-              承認
-            </button>
-          </form>
-          <form action={rejectBooking.bind(null, booking.id)}>
-            <button
-              type="submit"
-              className="px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700"
-            >
-              却下
-            </button>
-          </form>
-        </div>
       </div>
+      <form className="mt-3 space-y-2">
+        {booking.email ? (
+          <div>
+            <label htmlFor={`reply-${booking.id}`} className="block text-xs text-gray-500 mb-1">
+              返信メッセージ（任意・承認/却下どちらの場合も相手にメールで送られます）
+            </label>
+            <textarea
+              id={`reply-${booking.id}`}
+              name="replyMessage"
+              rows={2}
+              placeholder="例: ご予約ありがとうございます。当日お待ちしております。"
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400">
+            メールアドレスの記載がないため、返信メールは送信されません。
+          </p>
+        )}
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            formAction={approveBooking.bind(null, booking.id)}
+            className="px-3 py-1.5 rounded bg-green-600 text-white text-sm hover:bg-green-700"
+          >
+            承認
+          </button>
+          <button
+            type="submit"
+            formAction={rejectBooking.bind(null, booking.id)}
+            className="px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700"
+          >
+            却下
+          </button>
+        </div>
+      </form>
     </li>
   );
 }

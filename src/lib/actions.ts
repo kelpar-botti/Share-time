@@ -26,6 +26,10 @@ import {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Not a real content restriction — the form has no visible limit — just a
+// generous server-side ceiling so a raw POST can't write an unbounded blob.
+const MESSAGE_MAX_LENGTH = 20000;
+
 // Notification emails are a courtesy, not the source of truth — the booking
 // status change in Firestore already happened by the time we send one. If
 // Gmail is briefly unreachable or misconfigured, that must not make the
@@ -90,7 +94,7 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
   if (email && !EMAIL_PATTERN.test(email)) {
     backToForm("email");
   }
-  if (name.length > 100 || email.length > 200 || message.length > 2000) {
+  if (name.length > 100 || email.length > 200 || message.length > MESSAGE_MAX_LENGTH) {
     backToForm("missing");
   }
 
@@ -105,19 +109,25 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
   toDone();
 }
 
-export async function approveBooking(id: string): Promise<void> {
+export async function approveBooking(id: string, formData: FormData): Promise<void> {
   await requireAdmin();
+  const replyMessage = String(formData.get("replyMessage") ?? "").trim().slice(0, MESSAGE_MAX_LENGTH);
   await setBookingStatus(id, "approved");
   const booking = await getBooking(id);
-  if (booking?.email) await sendEmailSafely(() => sendBookingDecisionEmail(booking, "approved"));
+  if (booking?.email) {
+    await sendEmailSafely(() => sendBookingDecisionEmail(booking, "approved", replyMessage));
+  }
   revalidatePath("/admin");
 }
 
-export async function rejectBooking(id: string): Promise<void> {
+export async function rejectBooking(id: string, formData: FormData): Promise<void> {
   await requireAdmin();
+  const replyMessage = String(formData.get("replyMessage") ?? "").trim().slice(0, MESSAGE_MAX_LENGTH);
   await setBookingStatus(id, "rejected");
   const booking = await getBooking(id);
-  if (booking?.email) await sendEmailSafely(() => sendBookingDecisionEmail(booking, "rejected"));
+  if (booking?.email) {
+    await sendEmailSafely(() => sendBookingDecisionEmail(booking, "rejected", replyMessage));
+  }
   revalidatePath("/admin");
 }
 
