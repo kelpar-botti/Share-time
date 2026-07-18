@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AdminLoginLink } from "@/components/AdminLoginLink";
 import { getBookingsVisibleOnDate } from "@/lib/bookings";
 import {
   addDays,
@@ -94,6 +95,8 @@ export default async function DayPage({ searchParams }: Props) {
       >
         この日の予約を申請する
       </Link>
+
+      <AdminLoginLink />
     </main>
   );
 }

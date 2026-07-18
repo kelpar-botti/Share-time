@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AdminLoginLink } from "@/components/AdminLoginLink";
 import { formatJapaneseDate, isValidDateString, isValidTimeString } from "@/lib/date";
 
 type Props = {
@@ -27,6 +28,8 @@ export default async function BookDonePage({ searchParams }: Props) {
       >
         予約状況に戻る
       </Link>
+
+      <AdminLoginLink />
     </main>
   );
 }

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AdminLoginLink } from "@/components/AdminLoginLink";
 import { getActiveBookingsForDateRange, splitBookingMinutesByDate } from "@/lib/bookings";
 import {
   addDays,
@@ -133,6 +134,8 @@ export default async function HomePage({ searchParams }: Props) {
         <span className="w-4 h-4 rounded bg-blue-700" />
         <span>混雑</span>
       </div>
+
+      <AdminLoginLink />
     </main>
   );
 }
