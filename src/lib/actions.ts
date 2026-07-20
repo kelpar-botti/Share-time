@@ -10,6 +10,7 @@ import {
   getBooking,
   isRangeAvailable,
   setBookingStatus,
+  setTitlePublicAllowedByToken,
   setTitleVisibility,
 } from "./bookings";
 import { sendBookingDecisionEmail, sendBookingRequestEmail } from "./mailer";
@@ -59,10 +60,15 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
     redirect(
       `/book?date=${encodeURIComponent(date)}&start=${encodeURIComponent(startTime)}&end=${encodeURIComponent(endTime)}&error=${error}`
     );
-  const toDone = () =>
+  const toDone = (bookingId?: string, titleToken?: string) => {
+    const manageLink =
+      bookingId && titleToken
+        ? `&id=${encodeURIComponent(bookingId)}&titleToken=${encodeURIComponent(titleToken)}`
+        : "";
     redirect(
-      `/book/done?date=${encodeURIComponent(date)}&start=${encodeURIComponent(startTime)}&end=${encodeURIComponent(endTime)}`
+      `/book/done?date=${encodeURIComponent(date)}&start=${encodeURIComponent(startTime)}&end=${encodeURIComponent(endTime)}${manageLink}`
     );
+  };
 
   // Bots that fill every field (including the hidden honeypot) are quietly
   // sent to the "done" screen instead of an error, so they can't tell they
@@ -127,7 +133,7 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
   });
   await sendEmailSafely(() => sendBookingRequestEmail(booking));
 
-  toDone();
+  toDone(booking.id, booking.titleToken);
 }
 
 export async function approveBooking(id: string, formData: FormData): Promise<void> {
@@ -164,6 +170,17 @@ export async function hideBookingTitle(id: string): Promise<void> {
   await requireAdmin();
   await setTitleVisibility(id, false);
   revalidatePath("/admin");
+}
+
+/**
+ * The requester (not the admin) changing their own mind about whether the
+ * title is public — the token proves it's really them, no login needed.
+ */
+export async function updateMyTitlePublicAllowed(id: string, formData: FormData): Promise<void> {
+  const token = String(formData.get("token") ?? "");
+  const allowed = formData.get("allowed") === "true";
+  await setTitlePublicAllowedByToken(id, token, allowed);
+  redirect(`/title/${id}?token=${encodeURIComponent(token)}`);
 }
 
 export async function cancelBooking(id: string): Promise<void> {

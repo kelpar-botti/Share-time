@@ -32,6 +32,7 @@ function docToBooking(
     source: data.source ?? "visitor",
     approveToken: data.approveToken,
     rejectToken: data.rejectToken,
+    titleToken: data.titleToken ?? "",
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
@@ -162,6 +163,7 @@ export async function createBookingRequest(input: {
     source: "visitor" as BookingSource,
     approveToken: generateToken(),
     rejectToken: generateToken(),
+    titleToken: generateToken(),
     createdAt: now,
     updatedAt: now,
   };
@@ -195,6 +197,7 @@ export async function createOwnerBlock(input: {
     source: "owner" as BookingSource,
     approveToken: generateToken(),
     rejectToken: generateToken(),
+    titleToken: "",
     createdAt: now,
     updatedAt: now,
   };
@@ -248,8 +251,10 @@ type SetTitleVisibilityResult = { ok: true } | { ok: false; reason: "not_found" 
 /**
  * Admin-facing toggle for whether a booking's title is currently shown to
  * other visitors. Enforced here, not just hidden in the UI: if the
- * requester never allowed it (titlePublicAllowed), this refuses to turn it
- * on — that choice is permanent, even for the admin.
+ * requester hasn't granted titlePublicAllowed, this refuses to turn it on —
+ * the admin can only work within whatever permission the requester has
+ * currently granted, never override it. Only the requester can change the
+ * grant itself, via setTitlePublicAllowedByToken below.
  */
 export async function setTitleVisibility(id: string, visible: boolean): Promise<SetTitleVisibilityResult> {
   const ref = getDb().collection(COLLECTION).doc(id);
@@ -262,6 +267,43 @@ export async function setTitleVisibility(id: string, visible: boolean): Promise<
   }
 
   await ref.update({ titlePublic: visible, updatedAt: new Date().toISOString() });
+  return { ok: true };
+}
+
+/** Looks up a booking for its own requester, gated by the private titleToken (never shared with the admin). */
+export async function getBookingByTitleToken(id: string, token: string): Promise<Booking | null> {
+  const booking = await getBooking(id);
+  if (!booking || !booking.titleToken || booking.titleToken !== token) return null;
+  return booking;
+}
+
+type SetTitlePublicAllowedResult = { ok: true } | { ok: false; reason: "not_found" | "invalid_token" };
+
+/**
+ * The requester revisiting their own booking to grant or revoke permission
+ * to show the title publicly — the one control the admin does not have.
+ * Changing the grant also resets titlePublic to match it, so "revoke" takes
+ * effect immediately and "grant" doesn't require a separate admin step.
+ */
+export async function setTitlePublicAllowedByToken(
+  id: string,
+  token: string,
+  allowed: boolean
+): Promise<SetTitlePublicAllowedResult> {
+  const ref = getDb().collection(COLLECTION).doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) return { ok: false, reason: "not_found" };
+
+  const data = doc.data()!;
+  if (!data.titleToken || data.titleToken !== token) {
+    return { ok: false, reason: "invalid_token" };
+  }
+
+  await ref.update({
+    titlePublicAllowed: allowed,
+    titlePublic: allowed,
+    updatedAt: new Date().toISOString(),
+  });
   return { ok: true };
 }
 

@@ -92,6 +92,10 @@ export async function sendBookingDecisionEmail(
   const isApproved = decision === "approved";
   const range = `${booking.startTime}〜${booking.endTime}`;
   const replySection = replyMessage ? `\n\n${replyMessage}` : "";
+  const titleManageSection =
+    booking.title && booking.titleToken
+      ? `\n\n予定名の公開設定を変更する: ${baseUrl}/title/${booking.id}?token=${booking.titleToken}`
+      : "";
 
   await transporter.sendMail({
     from: `"予約サイト" <${process.env.GMAIL_USER}>`,
@@ -100,7 +104,7 @@ export async function sendBookingDecisionEmail(
       ? `【予約確定】${booking.date} ${range} のご予約が確定しました`
       : `【予約について】${booking.date} ${range} のご予約申請について`,
     text: isApproved
-      ? `${booking.name}様\n\n下記のご予約が確定しました。\n\n日時: ${booking.date} ${range}\n\n当日お待ちしております。${replySection}`
-      : `${booking.name}様\n\n大変申し訳ございませんが、下記の日時はご予約いただけませんでした。\n\n日時: ${booking.date} ${range}\n\nお手数ですが、別の日時にて改めてお申し込みください。\n${baseUrl}${replySection}`,
+      ? `${booking.name}様\n\n下記のご予約が確定しました。\n\n日時: ${booking.date} ${range}\n\n当日お待ちしております。${replySection}${titleManageSection}`
+      : `${booking.name}様\n\n大変申し訳ございませんが、下記の日時はご予約いただけませんでした。\n\n日時: ${booking.date} ${range}\n\nお手数ですが、別の日時にて改めてお申し込みください。\n${baseUrl}${replySection}${titleManageSection}`,
   });
 }

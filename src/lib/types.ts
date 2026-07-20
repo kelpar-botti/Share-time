@@ -14,9 +14,9 @@ export interface Booking {
   email: string;
   message: string;
   title: string; // 予定名 — short label for the booking, e.g. "歯医者"
-  // Set once by the requester at submission time and never changed
-  // afterward, by anyone — the one-way consent to ever show the title
-  // publicly. When false, titlePublic can never become true.
+  // The requester's consent to ever show the title publicly. Only the
+  // requester can change this (via titleToken) — the admin cannot grant it,
+  // only toggle titlePublic while this stays true.
   titlePublicAllowed: boolean;
   // The title's actual current visibility to other visitors. Only
   // meaningful (and only ever true) when titlePublicAllowed is true — the
@@ -26,6 +26,9 @@ export interface Booking {
   source: BookingSource;
   approveToken: string;
   rejectToken: string;
+  // Lets the requester themselves revisit /title/[id] later and change
+  // titlePublicAllowed — a capability the admin does not have.
+  titleToken: string;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
 }
