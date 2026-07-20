@@ -9,11 +9,13 @@ import {
   formatJapaneseDate,
   formatJapaneseMonth,
   generateTimeOptions,
+  getWeekday,
   isValidMonthString,
   OWNER_MAX_DAYS_AHEAD,
   todayInJapan,
   WEEKDAYS_JA,
 } from "@/lib/date";
+import { isJapaneseHoliday } from "@/lib/holidays";
 
 export const dynamic = "force-dynamic";
 
@@ -225,8 +227,11 @@ export default async function SchedulePage({ searchParams }: Props) {
           <table className="w-full text-center text-sm border-separate border-spacing-1">
             <thead>
               <tr>
-                {WEEKDAYS_JA.map((w) => (
-                  <th key={w} className="text-xs font-normal text-gray-400 pb-1">
+                {WEEKDAYS_JA.map((w, index) => (
+                  <th
+                    key={w}
+                    className={`text-xs font-normal pb-1 ${index === 0 ? "text-red-500" : "text-gray-400"}`}
+                  >
                     {w}
                   </th>
                 ))}
@@ -241,6 +246,7 @@ export default async function SchedulePage({ searchParams }: Props) {
                     }
                     const selectable = date >= today && date <= maxDate;
                     const dayNumber = Number(date.slice(-2));
+                    const isRedDay = getWeekday(date) === 0 || isJapaneseHoliday(date);
                     if (!selectable) {
                       return (
                         <td key={dayIndex} className="py-2 text-gray-300">
@@ -250,7 +256,11 @@ export default async function SchedulePage({ searchParams }: Props) {
                     }
                     return (
                       <td key={dayIndex} className="p-0">
-                        <label className="flex items-center justify-center rounded py-2 cursor-pointer hover:bg-blue-50 has-[:checked]:bg-blue-600 has-[:checked]:text-white transition">
+                        <label
+                          className={`flex items-center justify-center rounded py-2 cursor-pointer hover:bg-blue-50 has-[:checked]:bg-blue-600 has-[:checked]:text-white transition ${
+                            isRedDay ? "text-red-500" : ""
+                          }`}
+                        >
                           <input type="checkbox" name="dates" value={date} className="sr-only" />
                           {dayNumber}
                         </label>

@@ -40,6 +40,9 @@ export async function sendBookingRequestEmail(booking: Booking): Promise<void> {
   const rejectUrl = `${baseUrl}/r/${booking.id}?token=${booking.rejectToken}&action=reject`;
   const range = `${booking.startTime}〜${booking.endTime}`;
   const emailDisplay = booking.email || "(メールアドレスの記載なし)";
+  const titleLine = booking.title
+    ? `${booking.title}${booking.titlePublicAllowed ? "（予定名の公開を許可）" : "（予定名は非公開希望）"}`
+    : "(なし)";
 
   const transporter = getTransporter();
   await transporter.sendMail({
@@ -51,6 +54,7 @@ export async function sendBookingRequestEmail(booking: Booking): Promise<void> {
       "新しい予約申請が届きました。",
       "",
       `日時: ${booking.date} ${range}`,
+      `予定名: ${titleLine}`,
       `お名前: ${booking.name}`,
       `メール: ${emailDisplay}`,
       `内容: ${booking.message || "(なし)"}`,
@@ -64,6 +68,7 @@ export async function sendBookingRequestEmail(booking: Booking): Promise<void> {
       <div style="font-family: sans-serif; line-height: 1.6;">
         <h2>新しい予約申請</h2>
         <p><b>日時:</b> ${escapeHtml(booking.date)} ${escapeHtml(range)}</p>
+        <p><b>予定名:</b> ${escapeHtml(titleLine)}</p>
         <p><b>お名前:</b> ${escapeHtml(booking.name)}</p>
         <p><b>メール:</b> ${escapeHtml(emailDisplay)}</p>
         <p><b>内容:</b> ${escapeHtml(booking.message || "(なし)")}</p>

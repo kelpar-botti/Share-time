@@ -25,6 +25,9 @@ function docToBooking(
     name: data.name,
     email: data.email,
     message: data.message ?? "",
+    title: data.title ?? "",
+    titlePublicAllowed: data.titlePublicAllowed ?? false,
+    titlePublic: data.titlePublicAllowed ? (data.titlePublic ?? false) : false,
     status: data.status,
     source: data.source ?? "visitor",
     approveToken: data.approveToken,
@@ -138,6 +141,8 @@ export async function createBookingRequest(input: {
   name: string;
   email: string;
   message: string;
+  title: string;
+  titlePublicAllowed: boolean;
 }): Promise<Booking> {
   const now = new Date().toISOString();
   const ref = getDb().collection(COLLECTION).doc();
@@ -148,6 +153,11 @@ export async function createBookingRequest(input: {
     name: input.name,
     email: input.email,
     message: input.message,
+    title: input.title,
+    titlePublicAllowed: input.titlePublicAllowed,
+    // Starts matching the requester's consent; the admin can only ever
+    // toggle this while titlePublicAllowed stays true (see setTitleVisibility).
+    titlePublic: input.titlePublicAllowed,
     status: "pending" as BookingStatus,
     source: "visitor" as BookingSource,
     approveToken: generateToken(),
@@ -178,6 +188,9 @@ export async function createOwnerBlock(input: {
     name: input.label,
     email: process.env.ADMIN_EMAIL ?? "",
     message: "",
+    title: "",
+    titlePublicAllowed: false,
+    titlePublic: false,
     status: "approved" as BookingStatus,
     source: "owner" as BookingSource,
     approveToken: generateToken(),
@@ -228,6 +241,28 @@ export async function setBookingStatus(id: string, status: BookingStatus): Promi
     .collection(COLLECTION)
     .doc(id)
     .update({ status, updatedAt: new Date().toISOString() });
+}
+
+type SetTitleVisibilityResult = { ok: true } | { ok: false; reason: "not_found" | "not_allowed" };
+
+/**
+ * Admin-facing toggle for whether a booking's title is currently shown to
+ * other visitors. Enforced here, not just hidden in the UI: if the
+ * requester never allowed it (titlePublicAllowed), this refuses to turn it
+ * on — that choice is permanent, even for the admin.
+ */
+export async function setTitleVisibility(id: string, visible: boolean): Promise<SetTitleVisibilityResult> {
+  const ref = getDb().collection(COLLECTION).doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) return { ok: false, reason: "not_found" };
+
+  const data = doc.data()!;
+  if (visible && !data.titlePublicAllowed) {
+    return { ok: false, reason: "not_allowed" };
+  }
+
+  await ref.update({ titlePublic: visible, updatedAt: new Date().toISOString() });
+  return { ok: true };
 }
 
 /** All bookings, sorted by date/time; grouping into pending/history is left to the caller. */

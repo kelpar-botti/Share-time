@@ -14,6 +14,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   email: "メールアドレスの形式が正しくありません。",
   range: "開始時刻と終了時刻が同じです。時間を変えてください。",
   taken: "その時間帯は他の予約と重なっています。別の時間をお選びください。",
+  titleRequired: "予定名を公開する場合は、予定名を入力してください。",
 };
 
 export default async function BookPage({ searchParams }: Props) {
@@ -34,9 +35,13 @@ export default async function BookPage({ searchParams }: Props) {
       </Link>
       <h1 className="text-xl font-bold mt-3 mb-1">予約を申請する</h1>
       <p className="text-gray-600 mb-1">{formatJapaneseDate(date)}</p>
-      <p className="text-xs text-gray-400 mb-6">
+      <p className="text-xs text-gray-400 mb-4">
         24時間いつでも申請できます。日をまたぐ場合は、終了時刻に開始時刻より早い時間（翌日分）を選んでください（例:
         22:00〜02:00）。
+      </p>
+
+      <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2 mb-6">
+        入力されたお名前・メールアドレス・内容は、あなた以外の利用者には表示されません。管理者のみが確認できます。
       </p>
 
       {visible.length > 0 && (
@@ -48,6 +53,7 @@ export default async function BookPage({ searchParams }: Props) {
                 {b.carriesFromPreviousDay ? "00:00" : b.startTime}〜{b.endTime}
                 {b.spillsIntoNextDay && !b.carriesFromPreviousDay && "（翌日まで）"}
                 {b.carriesFromPreviousDay && "（前日から）"}
+                {b.titlePublic && b.title && `　${b.title}`}
               </li>
             ))}
           </ul>
@@ -115,6 +121,26 @@ export default async function BookPage({ searchParams }: Props) {
               ))}
             </select>
           </div>
+        </div>
+
+        <div className="border border-gray-200 rounded p-3">
+          <label htmlFor="title" className="block text-sm font-medium mb-1">
+            予定名（任意）
+          </label>
+          <input
+            id="title"
+            name="title"
+            maxLength={100}
+            placeholder="例: 歯医者、打ち合わせ"
+            className="w-full border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+          <label className="flex items-start gap-2 mt-3 text-sm text-gray-600">
+            <input type="checkbox" name="allowPublicTitle" className="mt-1 rounded" />
+            <span>
+              この予定名を他の利用者にも公開する（この時間帯を見た人に、時間だけでなく予定名も表示されます）。
+              後から管理者が非表示に変更することはできますが、ここでチェックを入れなかった場合は今後も非公開のままになり、管理者であっても公開に変更することはできません。
+            </span>
+          </label>
         </div>
 
         <div>

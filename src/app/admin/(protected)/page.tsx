@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { listBookings } from "@/lib/bookings";
-import { approveBooking, rejectBooking } from "@/lib/actions";
+import { approveBooking, hideBookingTitle, rejectBooking, showBookingTitle } from "@/lib/actions";
 import { formatJapaneseDate } from "@/lib/date";
 import type { Booking, BookingStatus } from "@/lib/types";
 
@@ -28,12 +28,38 @@ function StatusPill({ status }: { status: BookingStatus }) {
   );
 }
 
+function TitleVisibilityControl({ booking }: { booking: Booking }) {
+  if (!booking.title) return null;
+
+  if (!booking.titlePublicAllowed) {
+    return (
+      <p className="text-xs text-gray-400 mt-2">予定名の公開: 許可されていません（変更不可）</p>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <span className="text-xs text-gray-500">
+        予定名の公開: {booking.titlePublic ? "公開中" : "非公開"}
+      </span>
+      <form action={booking.titlePublic ? hideBookingTitle.bind(null, booking.id) : showBookingTitle.bind(null, booking.id)}>
+        <button type="submit" className="text-xs text-blue-600 hover:underline">
+          {booking.titlePublic ? "非公開にする" : "公開する"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function BookingSummary({ booking }: { booking: Booking }) {
   return (
     <div className="min-w-0">
       <div className="font-medium">
         {formatJapaneseDate(booking.date)} {booking.startTime}〜{booking.endTime}
       </div>
+      {booking.title && (
+        <div className="text-sm text-gray-700 mt-0.5 break-words">予定名: {booking.title}</div>
+      )}
       <div className="text-sm text-gray-600 break-words">
         {booking.name}
         {booking.email ? ` / ${booking.email}` : "（メールアドレスの記載なし）"}
@@ -41,6 +67,7 @@ function BookingSummary({ booking }: { booking: Booking }) {
       {booking.message && (
         <div className="text-sm text-gray-500 mt-1 break-words">{booking.message}</div>
       )}
+      <TitleVisibilityControl booking={booking} />
     </div>
   );
 }

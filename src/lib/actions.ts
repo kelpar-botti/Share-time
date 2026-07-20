@@ -10,6 +10,7 @@ import {
   getBooking,
   isRangeAvailable,
   setBookingStatus,
+  setTitleVisibility,
 } from "./bookings";
 import { sendBookingDecisionEmail, sendBookingRequestEmail } from "./mailer";
 import {
@@ -29,6 +30,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Not a real content restriction — the form has no visible limit — just a
 // generous server-side ceiling so a raw POST can't write an unbounded blob.
 const MESSAGE_MAX_LENGTH = 20000;
+const TITLE_MAX_LENGTH = 100;
 
 // Notification emails are a courtesy, not the source of truth — the booking
 // status change in Firestore already happened by the time we send one. If
@@ -49,6 +51,8 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim();
   const message = String(formData.get("message") ?? "").trim();
+  const title = String(formData.get("title") ?? "").trim();
+  const titlePublicAllowed = formData.get("allowPublicTitle") === "on";
   const honeypot = String(formData.get("company") ?? "").trim();
 
   const backToForm = (error: string) =>
@@ -94,7 +98,15 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
   if (email && !EMAIL_PATTERN.test(email)) {
     backToForm("email");
   }
-  if (name.length > 100 || email.length > 200 || message.length > MESSAGE_MAX_LENGTH) {
+  if (titlePublicAllowed && !title) {
+    backToForm("titleRequired");
+  }
+  if (
+    name.length > 100 ||
+    email.length > 200 ||
+    message.length > MESSAGE_MAX_LENGTH ||
+    title.length > TITLE_MAX_LENGTH
+  ) {
     backToForm("missing");
   }
 
@@ -103,7 +115,16 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
     backToForm("taken");
   }
 
-  const booking = await createBookingRequest({ date, startTime, endTime, name, email, message });
+  const booking = await createBookingRequest({
+    date,
+    startTime,
+    endTime,
+    name,
+    email,
+    message,
+    title,
+    titlePublicAllowed,
+  });
   await sendEmailSafely(() => sendBookingRequestEmail(booking));
 
   toDone();
@@ -128,6 +149,20 @@ export async function rejectBooking(id: string, formData: FormData): Promise<voi
   if (booking?.email) {
     await sendEmailSafely(() => sendBookingDecisionEmail(booking, "rejected", replyMessage));
   }
+  revalidatePath("/admin");
+}
+
+export async function showBookingTitle(id: string): Promise<void> {
+  await requireAdmin();
+  // setTitleVisibility itself refuses this when the requester never allowed
+  // it — that's enforced at the data layer, not just by hiding the button.
+  await setTitleVisibility(id, true);
+  revalidatePath("/admin");
+}
+
+export async function hideBookingTitle(id: string): Promise<void> {
+  await requireAdmin();
+  await setTitleVisibility(id, false);
   revalidatePath("/admin");
 }
 

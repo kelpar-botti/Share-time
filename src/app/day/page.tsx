@@ -83,6 +83,7 @@ export default async function DayPage({ searchParams }: Props) {
                 {b.carriesFromPreviousDay ? "00:00" : b.startTime}〜{b.endTime}　予約済み
                 {b.spillsIntoNextDay && !b.carriesFromPreviousDay && "（翌日まで）"}
                 {b.carriesFromPreviousDay && "（前日から）"}
+                {b.titlePublic && b.title && `　${b.title}`}
               </span>
             </div>
           ))
