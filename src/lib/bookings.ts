@@ -96,15 +96,20 @@ export async function getActiveBookingsForDateRange(
  * A booking can cross at most one midnight (see `crossesMidnight`), so any
  * conflict must involve a booking starting the day before, the same day, or
  * the day after — that 3-day window is all this needs to check.
+ *
+ * `excludeId` skips a booking's own current record when checking whether a
+ * *new* time for that same booking is free (otherwise it would always
+ * conflict with itself).
  */
 export async function isRangeAvailable(
   date: string,
   startTime: string,
-  endTime: string
+  endTime: string,
+  excludeId?: string
 ): Promise<boolean> {
   const nearby = await getActiveBookingsForDateRange(addDays(date, -1), addDays(date, 1));
   const candidate: TimeRangeLike = { date, startTime, endTime };
-  return !nearby.some((b) => rangesOverlap(b, candidate));
+  return !nearby.some((b) => b.id !== excludeId && rangesOverlap(b, candidate));
 }
 
 export interface VisibleBooking extends Booking {
@@ -305,6 +310,54 @@ export async function setTitlePublicAllowedByToken(
     updatedAt: new Date().toISOString(),
   });
   return { ok: true };
+}
+
+type UpdateBookingTimeResult =
+  | { ok: true; booking: Booking }
+  | { ok: false; reason: "not_found" | "invalid_token" | "not_approved" | "same_time" | "taken" };
+
+/**
+ * The requester extending or shortening their own already-approved booking
+ * (same date, new start/end time). Resets status back to "pending" so the
+ * admin re-approves the change — the existing approve/reject tokens keep
+ * working once status is pending again, so the re-approval email can reuse
+ * the same one-click links without minting new ones.
+ */
+export async function updateBookingTimeByToken(
+  id: string,
+  token: string,
+  startTime: string,
+  endTime: string
+): Promise<UpdateBookingTimeResult> {
+  const ref = getDb().collection(COLLECTION).doc(id);
+  const doc = await ref.get();
+  if (!doc.exists) return { ok: false, reason: "not_found" };
+
+  const data = doc.data()!;
+  if (!data.titleToken || data.titleToken !== token) {
+    return { ok: false, reason: "invalid_token" };
+  }
+  if (data.status !== "approved") {
+    return { ok: false, reason: "not_approved" };
+  }
+  if (startTime === endTime || (startTime === data.startTime && endTime === data.endTime)) {
+    return { ok: false, reason: "same_time" };
+  }
+
+  const available = await isRangeAvailable(data.date, startTime, endTime, id);
+  if (!available) {
+    return { ok: false, reason: "taken" };
+  }
+
+  await ref.update({
+    startTime,
+    endTime,
+    status: "pending" as BookingStatus,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const updated = await getBooking(id);
+  return { ok: true, booking: updated! };
 }
 
 /** All bookings, sorted by date/time; grouping into pending/history is left to the caller. */

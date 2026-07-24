@@ -1,4 +1,5 @@
 import Link from "next/link";
+import MonthDensityCalendar from "@/components/MonthDensityCalendar";
 import { listBookings } from "@/lib/bookings";
 import { approveBooking, hideBookingTitle, rejectBooking, showBookingTitle } from "@/lib/actions";
 import { formatJapaneseDate } from "@/lib/date";
@@ -89,6 +90,16 @@ function PendingCard({ booking }: { booking: Booking }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <BookingSummary booking={booking} />
       </div>
+
+      <details open className="mt-3 border border-gray-200 rounded p-3">
+        <summary className="text-xs text-gray-500 cursor-pointer select-none">
+          前後の混み具合を確認する（{formatJapaneseDate(booking.date)}を含む月・他の利用者と同じ表示）
+        </summary>
+        <div className="mt-3 max-w-xs mx-auto">
+          <MonthDensityCalendar month={booking.date.slice(0, 7)} highlightDate={booking.date} openInNewTab />
+        </div>
+      </details>
+
       <form className="mt-3 space-y-2">
         {booking.email ? (
           <div>

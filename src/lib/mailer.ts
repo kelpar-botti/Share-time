@@ -82,6 +82,62 @@ export async function sendBookingRequestEmail(booking: Booking): Promise<void> {
   });
 }
 
+/**
+ * The requester changed the time on their own already-approved booking, so
+ * it's back to "pending" — this tells the admin to re-approve or reject the
+ * new time, reusing the same one-click links as the original request email.
+ */
+export async function sendBookingChangeRequestEmail(booking: Booking, previousRange: string): Promise<void> {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (!adminEmail) {
+    throw new Error("ADMIN_EMAIL が設定されていません。.env.local を確認してください。");
+  }
+
+  const baseUrl = getAppUrl();
+  const approveUrl = `${baseUrl}/r/${booking.id}?token=${booking.approveToken}&action=approve`;
+  const rejectUrl = `${baseUrl}/r/${booking.id}?token=${booking.rejectToken}&action=reject`;
+  const range = `${booking.startTime}〜${booking.endTime}`;
+  const emailDisplay = booking.email || "(メールアドレスの記載なし)";
+
+  const transporter = getTransporter();
+  await transporter.sendMail({
+    from: `"予約サイト" <${process.env.GMAIL_USER}>`,
+    to: adminEmail,
+    ...(booking.email ? { replyTo: booking.email } : {}),
+    subject: `【要再承認】${booking.date} の予約時間が変更されました - ${booking.name}様`,
+    text: [
+      "承認済みだった予約について、利用者が時間を変更しました。再度承認または却下してください。",
+      "",
+      `日時: ${booking.date} ${range}`,
+      `変更前: ${booking.date} ${previousRange}`,
+      `予定名: ${booking.title || "(なし)"}`,
+      `お名前: ${booking.name}`,
+      `メール: ${emailDisplay}`,
+      "",
+      `承認する: ${approveUrl}`,
+      `却下する: ${rejectUrl}`,
+      "",
+      `管理画面: ${baseUrl}/admin`,
+    ].join("\n"),
+    html: `
+      <div style="font-family: sans-serif; line-height: 1.6;">
+        <h2>予約時間の変更（要再承認）</h2>
+        <p>承認済みだった予約について、利用者が時間を変更しました。再度承認または却下してください。</p>
+        <p><b>変更後の日時:</b> ${escapeHtml(booking.date)} ${escapeHtml(range)}</p>
+        <p><b>変更前:</b> ${escapeHtml(booking.date)} ${escapeHtml(previousRange)}</p>
+        <p><b>予定名:</b> ${escapeHtml(booking.title || "(なし)")}</p>
+        <p><b>お名前:</b> ${escapeHtml(booking.name)}</p>
+        <p><b>メール:</b> ${escapeHtml(emailDisplay)}</p>
+        <p>
+          <a href="${approveUrl}" style="display:inline-block;padding:10px 20px;background:#16a34a;color:#fff;text-decoration:none;border-radius:6px;margin-right:8px;">承認する</a>
+          <a href="${rejectUrl}" style="display:inline-block;padding:10px 20px;background:#dc2626;color:#fff;text-decoration:none;border-radius:6px;">却下する</a>
+        </p>
+        <p><a href="${baseUrl}/admin">管理画面を開く</a></p>
+      </div>
+    `,
+  });
+}
+
 export async function sendBookingDecisionEmail(
   booking: Booking,
   decision: "approved" | "rejected",

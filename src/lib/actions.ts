@@ -12,8 +12,9 @@ import {
   setBookingStatus,
   setTitlePublicAllowedByToken,
   setTitleVisibility,
+  updateBookingTimeByToken,
 } from "./bookings";
-import { sendBookingDecisionEmail, sendBookingRequestEmail } from "./mailer";
+import { sendBookingChangeRequestEmail, sendBookingDecisionEmail, sendBookingRequestEmail } from "./mailer";
 import {
   daysFromToday,
   enumerateDates,
@@ -181,6 +182,53 @@ export async function updateMyTitlePublicAllowed(id: string, formData: FormData)
   const allowed = formData.get("allowed") === "true";
   await setTitlePublicAllowedByToken(id, token, allowed);
   redirect(`/title/${id}?token=${encodeURIComponent(token)}`);
+}
+
+/**
+ * The requester extending or shortening their own already-approved booking.
+ * Puts it back to "pending" and emails the admin for re-approval — only the
+ * requester can do this (token-gated), and only while the booking is
+ * currently approved.
+ */
+export async function requestTimeChange(id: string, formData: FormData): Promise<void> {
+  const token = String(formData.get("token") ?? "");
+  const startTime = String(formData.get("newStartTime") ?? "");
+  const endTime = String(formData.get("newEndTime") ?? "");
+
+  const backTo = (error?: string) =>
+    redirect(`/title/${id}?token=${encodeURIComponent(token)}${error ? `&timeError=${error}` : ""}`);
+
+  const validTimes = new Set(generateTimeOptions());
+  if (
+    !isValidTimeString(startTime) ||
+    !isValidTimeString(endTime) ||
+    !validTimes.has(startTime) ||
+    !validTimes.has(endTime)
+  ) {
+    backTo("invalid");
+  }
+
+  const before = await getBooking(id);
+  const result = await updateBookingTimeByToken(id, token, startTime, endTime);
+
+  if (!result.ok) {
+    const errorParam: Record<typeof result.reason, string> = {
+      not_found: "invalid",
+      invalid_token: "invalid",
+      not_approved: "invalid",
+      same_time: "same",
+      taken: "taken",
+    };
+    backTo(errorParam[result.reason]);
+    return;
+  }
+
+  if (before) {
+    const previousRange = `${before.startTime}〜${before.endTime}`;
+    await sendEmailSafely(() => sendBookingChangeRequestEmail(result.booking, previousRange));
+  }
+
+  redirect(`/title/${id}?token=${encodeURIComponent(token)}&timeUpdated=1`);
 }
 
 export async function cancelBooking(id: string): Promise<void> {
