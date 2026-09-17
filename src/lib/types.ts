@@ -15,8 +15,8 @@ export interface Booking {
   message: string;
   title: string; // 予定名 — short label for the booking, e.g. "歯医者"
   // The requester's consent to ever show the title publicly. Only the
-  // requester can change this (via titleToken) — the admin cannot grant it,
-  // only toggle titlePublic while this stays true.
+  // requester can change this (via titleToken) for visitor bookings. For
+  // owner schedules, the admin is the author and can change both flags.
   titlePublicAllowed: boolean;
   // The title's actual current visibility to other visitors. Only
   // meaningful (and only ever true) when titlePublicAllowed is true — the

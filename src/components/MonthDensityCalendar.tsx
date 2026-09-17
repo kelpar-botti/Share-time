@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getActiveBookingsForDateRange, splitBookingMinutesByDate } from "@/lib/bookings";
-import { addDays, buildMonthGrid, formatJapaneseMonth, getMonthDateRange, getWeekday, todayInJapan, WEEKDAYS_JA } from "@/lib/date";
+import { addDays, buildMonthGrid, formatJapaneseDate, formatJapaneseMonth, getMonthDateRange, getWeekday, todayInJapan, WEEKDAYS_JA } from "@/lib/date";
 import { isJapaneseHoliday } from "@/lib/holidays";
 
 // Google Maps の混雑度表示のように、埋まっている割合が高いほど濃い青にする。
@@ -10,19 +10,19 @@ function densityBgClass(ratio: number): string {
   if (ratio <= 0) return "bg-white border-gray-200";
   if (ratio < 0.25) return "bg-blue-100 border-blue-100";
   if (ratio < 0.5) return "bg-blue-300 border-blue-300";
-  if (ratio < 0.75) return "bg-blue-500 border-blue-500";
-  return "bg-blue-700 border-blue-700";
+  if (ratio < 0.75) return "bg-blue-700 border-blue-700";
+  return "bg-blue-900 border-blue-900";
 }
 
 function densityTextClass(ratio: number): string {
   if (ratio <= 0) return "text-gray-700";
   if (ratio < 0.25) return "text-blue-900";
   if (ratio < 0.5) return "text-blue-950";
-  return "text-white"; // ratio >= 0.5 (blue-500/blue-700 backgrounds)
+  return "text-white"; // ratio >= 0.5 (blue-700/blue-900 backgrounds)
 }
 
 function holidayTextClass(ratio: number): string {
-  return ratio < 0.5 ? "text-red-600" : "text-red-200";
+  return ratio < 0.5 ? "text-red-800" : "text-red-100";
 }
 
 type Props = {
@@ -70,14 +70,16 @@ export default async function MonthDensityCalendar({
 
   return (
     <div>
-      <div className="text-sm font-semibold text-center mb-2">{formatJapaneseMonth(month)}</div>
-      <table className="w-full text-center text-sm border-separate border-spacing-1">
+      <div className="text-lg font-bold text-center mb-4">{formatJapaneseMonth(month)}</div>
+      <table className="w-full table-fixed text-center text-sm border-separate border-spacing-1">
+        <caption className="sr-only">{formatJapaneseMonth(month)}の予約状況</caption>
         <thead>
           <tr>
             {WEEKDAYS_JA.map((w, index) => (
               <th
                 key={w}
-                className={`text-xs font-normal pb-1 ${index === 0 ? "text-red-500" : "text-gray-400"}`}
+                scope="col"
+                className={`text-xs font-medium pb-2 ${index === 0 ? "text-red-700" : "text-slate-600"}`}
               >
                 {w}
               </th>
@@ -105,7 +107,9 @@ export default async function MonthDensityCalendar({
                     <Link
                       href={dayHref(date)}
                       target={openInNewTab ? "_blank" : undefined}
-                      className={`flex items-center justify-center rounded-lg border py-2 transition hover:opacity-80 ${densityBgClass(
+                      aria-current={isToday ? "date" : undefined}
+                      aria-label={`${formatJapaneseDate(date)}${isToday ? "、今日" : ""}、${ratio <= 0 ? "予定なし" : `予定あり（約${Math.round((minutesByDate.get(date) ?? 0) / 60 * 10) / 10}時間）`}${openInNewTab ? "、新しいタブで開く" : ""}`}
+                      className={`relative flex min-h-11 items-center justify-center rounded-lg border py-2 font-medium transition hover:opacity-80 ${densityBgClass(
                         ratio
                       )} ${textClass} ${ring}`}
                     >
@@ -120,14 +124,15 @@ export default async function MonthDensityCalendar({
       </table>
 
       {showLegend && (
-        <div className="flex items-center justify-center gap-2 mt-3 text-xs text-gray-400">
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-4 text-xs text-slate-600">
           <span>空き</span>
           <span className="w-3 h-3 rounded bg-white border border-gray-200" />
           <span className="w-3 h-3 rounded bg-blue-100" />
           <span className="w-3 h-3 rounded bg-blue-300" />
-          <span className="w-3 h-3 rounded bg-blue-500" />
           <span className="w-3 h-3 rounded bg-blue-700" />
+          <span className="w-3 h-3 rounded bg-blue-900" />
           <span>混雑</span>
+          <span className="ml-3">青い枠：今日</span>
         </div>
       )}
     </div>

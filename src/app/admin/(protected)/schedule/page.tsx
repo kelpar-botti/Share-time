@@ -1,315 +1,43 @@
 import Link from "next/link";
 import { listBookings } from "@/lib/bookings";
-import { cancelBooking, createOwnerScheduleBlocks } from "@/lib/actions";
-import {
-  addDays,
-  addMonths,
-  buildMonthGrid,
-  currentMonthInJapan,
-  formatJapaneseDate,
-  formatJapaneseMonth,
-  generateTimeOptions,
-  getWeekday,
-  isValidMonthString,
-  OWNER_MAX_DAYS_AHEAD,
-  todayInJapan,
-  WEEKDAYS_JA,
-} from "@/lib/date";
-import { isJapaneseHoliday } from "@/lib/holidays";
+import { cancelBooking, updateOwnerTitleVisibility } from "@/lib/actions";
+import { addDays, currentMonthInJapan, formatJapaneseDate, isValidMonthString, OWNER_MAX_DAYS_AHEAD, todayInJapan } from "@/lib/date";
+import OwnerScheduleForm from "@/components/OwnerScheduleForm";
+import SubmitButton from "@/components/SubmitButton";
 
 export const dynamic = "force-dynamic";
-
-type Props = {
-  searchParams: Promise<{
-    month?: string;
-    created?: string;
-    skipped?: string;
-    error?: string;
-  }>;
-};
-
+type Props = { searchParams: Promise<{ month?: string; created?: string; skipped?: string; error?: string; saved?: string }> };
 const ERROR_MESSAGES: Record<string, string> = {
   time: "開始時刻・終了時刻を正しく選択してください。",
-  nodates: "曜日と期間、またはカレンダーの日付を1つ以上選んでください。",
+  nodates: "カレンダーの日付、または繰り返しの曜日と期間を選んでください。",
+  title: "公開する予定名を入力してください（100文字以内）。",
 };
 
 export default async function SchedulePage({ searchParams }: Props) {
-  const { month: monthParam, created, skipped, error } = await searchParams;
+  const { month: requestedMonth, created, skipped, error, saved } = await searchParams;
   const today = todayInJapan();
   const maxDate = addDays(today, OWNER_MAX_DAYS_AHEAD);
-  const maxMonth = maxDate.slice(0, 7);
-
-  const month = isValidMonthString(monthParam) ? monthParam : currentMonthInJapan();
-  const weeks = buildMonthGrid(month);
-  const times = generateTimeOptions();
-
-  const canGoPrevMonth = month > currentMonthInJapan();
-  const canGoNextMonth = month < maxMonth;
-  const prevMonth = addMonths(month, -1);
-  const nextMonth = addMonths(month, 1);
-
-  const upcoming = (await listBookings({ source: "owner" })).filter(
-    (b) => b.status !== "cancelled" && b.date >= today
-  );
-
-  const errorMessage = error ? ERROR_MESSAGES[error] : undefined;
+  const month = isValidMonthString(requestedMonth) && requestedMonth >= today.slice(0, 7) && requestedMonth <= maxDate.slice(0, 7) ? requestedMonth : currentMonthInJapan();
+  const upcoming = (await listBookings({ source: "owner" })).filter(b => b.status !== "cancelled" && b.date >= today);
   const skippedDates = skipped ? skipped.split(",").filter(Boolean) : [];
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-8">
+    <div className="mx-auto w-full max-w-3xl space-y-6">
       <div>
-        <Link href="/admin" className="text-sm text-blue-600 hover:underline">
-          ← 管理画面に戻る
-        </Link>
-        <h1 className="text-xl font-bold mt-2">自分の予定を登録する</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          バイトなど、あなた自身の予定を直接ブロックできます（承認不要ですぐに反映されます）。
-        </p>
+        <Link href="/admin" className="inline-flex min-h-11 items-center text-sm font-medium text-blue-700 hover:underline">← 予約の管理に戻る</Link>
+        <p className="eyebrow mt-3">MY SCHEDULE</p>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">自分の予定を登録</h1>
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">バイトや外出など、予約を受け付けない時間を登録できます。予定名の公開範囲も選べます。</p>
       </div>
-
-      {created !== undefined && (
-        <div className="rounded border border-green-200 bg-green-50 text-green-700 px-3 py-2 text-sm">
-          {created}件の予定を登録しました。
-          {skippedDates.length > 0 && (
-            <div className="mt-1">
-              以下の日付は既に予約と重なっていたためスキップしました:{" "}
-              {skippedDates.map((d) => formatJapaneseDate(d)).join("、")}
-            </div>
-          )}
-        </div>
-      )}
-      {errorMessage && (
-        <div className="rounded border border-red-200 bg-red-50 text-red-700 px-3 py-2 text-sm">
-          {errorMessage}
-        </div>
-      )}
-
-      <form
-        action={createOwnerScheduleBlocks}
-        className="space-y-6 bg-white border border-gray-200 rounded-lg p-4"
-      >
-        <input type="hidden" name="month" value={month} />
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label htmlFor="startTime" className="block text-sm font-medium mb-1">
-              開始時刻
-            </label>
-            <select
-              id="startTime"
-              name="startTime"
-              required
-              defaultValue=""
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            >
-              <option value="" disabled>
-                選択してください
-              </option>
-              {times.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="endTime" className="block text-sm font-medium mb-1">
-              終了時刻
-            </label>
-            <select
-              id="endTime"
-              name="endTime"
-              required
-              defaultValue=""
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            >
-              <option value="" disabled>
-                選択してください
-              </option>
-              {times.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <label htmlFor="label" className="block text-sm font-medium mb-1">
-            メモ（任意・自分だけに表示されます）
-          </label>
-          <input
-            id="label"
-            name="label"
-            maxLength={100}
-            placeholder="例: バイト"
-            className="w-full border border-gray-300 rounded px-3 py-2"
-          />
-        </div>
-
-        <fieldset className="border border-gray-200 rounded p-3">
-          <legend className="text-sm font-medium px-1">曜日で繰り返し指定（任意）</legend>
-          <div className="flex flex-wrap gap-3 mb-3">
-            {WEEKDAYS_JA.map((label, index) => (
-              <label key={index} className="flex items-center gap-1 text-sm">
-                <input type="checkbox" name="weekdays" value={index} className="rounded" />
-                {label}
-              </label>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="rangeStart" className="block text-xs text-gray-500 mb-1">
-                開始日
-              </label>
-              <input
-                id="rangeStart"
-                type="date"
-                name="rangeStart"
-                min={today}
-                max={maxDate}
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-              />
-            </div>
-            <div>
-              <label htmlFor="rangeEnd" className="block text-xs text-gray-500 mb-1">
-                終了日
-              </label>
-              <input
-                id="rangeEnd"
-                type="date"
-                name="rangeEnd"
-                min={today}
-                max={maxDate}
-                className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-              />
-            </div>
-          </div>
-        </fieldset>
-
-        <fieldset className="border border-gray-200 rounded p-3">
-          <legend className="text-sm font-medium px-1">
-            カレンダーから日付を選択（任意・タップで選択）
-          </legend>
-
-          <div className="flex items-center justify-between mb-2">
-            {canGoPrevMonth ? (
-              <Link
-                href={`/admin/schedule?month=${prevMonth}`}
-                className="px-2 py-1 rounded border border-gray-300 text-xs hover:bg-gray-100"
-              >
-                ← 前月
-              </Link>
-            ) : (
-              <span className="px-2 py-1 rounded border border-gray-200 text-xs text-gray-300">
-                ← 前月
-              </span>
-            )}
-            <div className="text-sm font-semibold">{formatJapaneseMonth(month)}</div>
-            {canGoNextMonth ? (
-              <Link
-                href={`/admin/schedule?month=${nextMonth}`}
-                className="px-2 py-1 rounded border border-gray-300 text-xs hover:bg-gray-100"
-              >
-                次月 →
-              </Link>
-            ) : (
-              <span className="px-2 py-1 rounded border border-gray-200 text-xs text-gray-300">
-                次月 →
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-gray-400 mb-2">
-            月を移動すると、この画面でまだ送信していない選択はリセットされます。
-          </p>
-
-          <table className="w-full text-center text-sm border-separate border-spacing-1">
-            <thead>
-              <tr>
-                {WEEKDAYS_JA.map((w, index) => (
-                  <th
-                    key={w}
-                    className={`text-xs font-normal pb-1 ${index === 0 ? "text-red-500" : "text-gray-400"}`}
-                  >
-                    {w}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {weeks.map((week, weekIndex) => (
-                <tr key={weekIndex}>
-                  {week.map((date, dayIndex) => {
-                    if (!date) {
-                      return <td key={dayIndex} />;
-                    }
-                    const selectable = date >= today && date <= maxDate;
-                    const dayNumber = Number(date.slice(-2));
-                    const isRedDay = getWeekday(date) === 0 || isJapaneseHoliday(date);
-                    if (!selectable) {
-                      return (
-                        <td key={dayIndex} className="py-2 text-gray-300">
-                          {dayNumber}
-                        </td>
-                      );
-                    }
-                    return (
-                      <td key={dayIndex} className="p-0">
-                        <label
-                          className={`flex items-center justify-center rounded py-2 cursor-pointer hover:bg-blue-50 has-[:checked]:bg-blue-600 has-[:checked]:text-white transition ${
-                            isRedDay ? "text-red-500" : ""
-                          }`}
-                        >
-                          <input type="checkbox" name="dates" value={date} className="sr-only" />
-                          {dayNumber}
-                        </label>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </fieldset>
-
-        <button
-          type="submit"
-          className="w-full bg-blue-600 text-white rounded px-4 py-2.5 font-medium hover:bg-blue-700 transition"
-        >
-          この内容で予定を登録する
-        </button>
-      </form>
-
-      <section>
-        <h2 className="text-lg font-bold mb-3">登録済みの予定（今後の分）</h2>
-        {upcoming.length === 0 ? (
-          <p className="text-gray-500 text-sm">登録されている予定はありません。</p>
-        ) : (
-          <ul className="space-y-2">
-            {upcoming.map((b) => (
-              <li
-                key={b.id}
-                className="bg-white border border-gray-200 rounded-lg p-3 flex items-center justify-between gap-3"
-              >
-                <div className="text-sm min-w-0">
-                  <span className="font-medium">
-                    {formatJapaneseDate(b.date)} {b.startTime}〜{b.endTime}
-                  </span>
-                  <span className="text-gray-500 ml-2 break-words">{b.name}</span>
-                </div>
-                <form action={cancelBooking.bind(null, b.id)}>
-                  <button
-                    type="submit"
-                    className="px-3 py-1.5 rounded border border-gray-300 text-sm hover:bg-gray-100 shrink-0"
-                  >
-                    取り消す
-                  </button>
-                </form>
-              </li>
-            ))}
-          </ul>
-        )}
+      {created !== undefined && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><strong>{created}件の予定を登録しました。</strong>{skippedDates.length > 0 && <p className="mt-2 leading-relaxed">予約と重なったためスキップ：{skippedDates.map(formatJapaneseDate).join("、")}</p>}</div>}
+      {error && ERROR_MESSAGES[error] && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{ERROR_MESSAGES[error]}</p>}
+      <OwnerScheduleForm key={saved ?? "new"} initialMonth={month} today={today} maxDate={maxDate} />
+      <section aria-labelledby="upcoming-heading">
+        <div className="mb-4 flex items-center justify-between"><h2 id="upcoming-heading" className="section-title">登録済みの予定</h2><span className="text-sm text-slate-600">今後 {upcoming.length}件</span></div>
+        {upcoming.length === 0 ? <p className="surface p-6 text-sm text-slate-600">まだ予定がありません。上のフォームから登録できます。</p> : <ul className="space-y-3">{upcoming.map(b => <li key={b.id} className="surface p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-words font-semibold">{b.title || b.name}</h3><p className="mt-1 text-sm text-slate-600">{formatJapaneseDate(b.date)}<br />{b.startTime}〜{b.endTime <= b.startTime ? "翌日 " : ""}{b.endTime}</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${b.titlePublic ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-700"}`}>{b.titlePublic ? "予定名を公開中" : "予定名は非公開"}</span></div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3"><form action={updateOwnerTitleVisibility.bind(null, b.id, !b.titlePublic)}><SubmitButton className="button-secondary" pendingLabel="変更中…">{b.titlePublic ? "予定名を非公開にする" : "予定名を公開する"}</SubmitButton></form><form action={cancelBooking.bind(null, b.id)}><SubmitButton className="min-h-11 rounded-lg px-3 text-sm text-red-700 hover:bg-red-50" pendingLabel="取り消し中…">予定を取り消す</SubmitButton></form></div>
+        </li>)}</ul>}
       </section>
     </div>
   );

@@ -10,6 +10,7 @@ import {
   getBooking,
   isRangeAvailable,
   setBookingStatus,
+  setOwnerTitleVisibility,
   setTitlePublicAllowedByToken,
   setTitleVisibility,
   updateBookingTimeByToken,
@@ -239,7 +240,16 @@ export async function cancelBooking(id: string): Promise<void> {
 }
 
 export async function adminSignOut(): Promise<void> {
-  await signOut({ redirectTo: "/admin/login" });
+  await signOut({ redirectTo: "/" });
+}
+
+export async function updateOwnerTitleVisibility(id: string, visible: boolean): Promise<void> {
+  await requireAdmin();
+  await setOwnerTitleVisibility(id, visible);
+  revalidatePath("/admin/schedule");
+  revalidatePath("/");
+  revalidatePath("/day");
+  revalidatePath("/book");
 }
 
 /**
@@ -254,13 +264,19 @@ export async function createOwnerScheduleBlocks(formData: FormData): Promise<voi
   const month = String(formData.get("month") ?? "");
   const startTime = String(formData.get("startTime") ?? "");
   const endTime = String(formData.get("endTime") ?? "");
-  const label = String(formData.get("label") ?? "").trim() || "予定あり";
+  const enteredLabel = String(formData.get("label") ?? "").trim();
+  const titlePublic = formData.get("titlePublic") === "on";
+  const label = enteredLabel || "予定あり";
   const rangeStart = String(formData.get("rangeStart") ?? "");
   const rangeEnd = String(formData.get("rangeEnd") ?? "");
   const weekdays = new Set(formData.getAll("weekdays").map(String));
   const pickedDates = formData.getAll("dates").map(String);
 
   const scheduleUrl = (params: string) => `/admin/schedule?month=${encodeURIComponent(month)}${params}`;
+
+  if (enteredLabel.length > TITLE_MAX_LENGTH || (titlePublic && !enteredLabel)) {
+    redirect(scheduleUrl("&error=title"));
+  }
 
   const validTimes = new Set(generateTimeOptions());
   if (
@@ -313,12 +329,15 @@ export async function createOwnerScheduleBlocks(formData: FormData): Promise<voi
       skipped.push(date);
       continue;
     }
-    await createOwnerBlock({ date, startTime, endTime, label });
+    await createOwnerBlock({ date, startTime, endTime, label, titlePublic });
     created += 1;
   }
 
   revalidatePath("/admin/schedule");
 
+  revalidatePath("/");
+  revalidatePath("/day");
+
   const skippedParam = skipped.length > 0 ? `&skipped=${encodeURIComponent(skipped.join(","))}` : "";
-  redirect(scheduleUrl(`&created=${created}${skippedParam}`));
+  redirect(scheduleUrl(`&created=${created}${skippedParam}&saved=${Date.now()}`));
 }

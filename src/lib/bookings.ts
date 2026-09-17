@@ -185,6 +185,7 @@ export async function createOwnerBlock(input: {
   startTime: string;
   endTime: string;
   label: string;
+  titlePublic?: boolean;
 }): Promise<Booking> {
   const now = new Date().toISOString();
   const ref = getDb().collection(COLLECTION).doc();
@@ -195,9 +196,9 @@ export async function createOwnerBlock(input: {
     name: input.label,
     email: process.env.ADMIN_EMAIL ?? "",
     message: "",
-    title: "",
-    titlePublicAllowed: false,
-    titlePublic: false,
+    title: input.label,
+    titlePublicAllowed: input.titlePublic === true,
+    titlePublic: input.titlePublic === true,
     status: "approved" as BookingStatus,
     source: "owner" as BookingSource,
     approveToken: generateToken(),
@@ -214,6 +215,26 @@ export async function getBooking(id: string): Promise<Booking | null> {
   const doc = await getDb().collection(COLLECTION).doc(id).get();
   if (!doc.exists) return null;
   return docToBooking(doc);
+}
+
+/** Owner consent can only be changed for the owner's own schedule, never a visitor request. */
+export async function setOwnerTitleVisibility(id: string, visible: boolean): Promise<void> {
+  const ref = getDb().collection(COLLECTION).doc(id);
+  await getDb().runTransaction(async (transaction) => {
+    const doc = await transaction.get(ref);
+    const data = doc.data();
+    if (!data || data.source !== "owner" || data.status === "cancelled") {
+      throw new Error("変更できる管理者の予定が見つかりません。");
+    }
+    // Older owner records stored their private label only in `name`.
+    const title = data.title || data.name || "予定あり";
+    transaction.update(ref, {
+      title,
+      titlePublicAllowed: visible,
+      titlePublic: visible,
+      updatedAt: new Date().toISOString(),
+    });
+  });
 }
 
 type RespondResult =

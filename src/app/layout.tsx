@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "予約サイト",
+  title: "Share Time | 予約カレンダー",
   description: "空き時間を確認して予約を申請できます。",
 };
 
@@ -32,7 +32,7 @@ export default function RootLayout({
       lang="ja"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-gray-50 text-gray-900">{children}</body>
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }

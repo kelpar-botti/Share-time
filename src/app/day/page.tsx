@@ -34,12 +34,13 @@ export default async function DayPage({ searchParams }: Props) {
       <Link href={`/?month=${date.slice(0, 7)}`} className="text-sm text-blue-600 hover:underline">
         ← 月間カレンダーに戻る
       </Link>
-      <h1 className="text-2xl font-bold mt-2 mb-1">予約状況</h1>
+      <p className="eyebrow mt-5">SHARE TIME</p>
+      <h1 className="text-2xl font-bold mt-2 mb-1">この日の予定</h1>
       <p className="text-sm text-gray-500 mb-6">
         24時間いつでも空いている時間帯を選んで予約を申請できます。
       </p>
 
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         {canGoPrev ? (
           <Link
             href={`/day?date=${prevDate}`}
@@ -52,7 +53,7 @@ export default async function DayPage({ searchParams }: Props) {
             ← 前の日
           </span>
         )}
-        <div className="text-lg font-semibold">{formatJapaneseDate(date)}</div>
+        <div className="order-first w-full text-center text-lg font-semibold sm:order-none sm:w-auto">{formatJapaneseDate(date)}</div>
         {canGoNext ? (
           <Link
             href={`/day?date=${nextDate}`}
@@ -76,14 +77,13 @@ export default async function DayPage({ searchParams }: Props) {
           visible.map((b) => (
             <div
               key={b.id}
-              className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-100 px-4 py-3 text-gray-500"
+              className="surface flex items-start gap-3 px-4 py-4 text-slate-700"
             >
-              <span className="text-lg leading-none">×</span>
-              <span>
-                {b.carriesFromPreviousDay ? "00:00" : b.startTime}〜{b.endTime}　予約済み
-                {b.spillsIntoNextDay && !b.carriesFromPreviousDay && "（翌日まで）"}
-                {b.carriesFromPreviousDay && "（前日から）"}
-                {b.titlePublic && b.title && `　${b.title}`}
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold">予約済み</span>
+              <span className="min-w-0 break-words">
+                <span className="font-semibold">{b.carriesFromPreviousDay ? "00:00" : b.startTime}〜{b.spillsIntoNextDay ? "翌日 " : ""}{b.endTime}</span>
+                {b.carriesFromPreviousDay && <span className="ml-2 text-xs text-slate-600">前日から</span>}
+                {b.titlePublic && b.title && <span className="mt-1 block text-sm">{b.title}</span>}
               </span>
             </div>
           ))
@@ -92,7 +92,7 @@ export default async function DayPage({ searchParams }: Props) {
 
       <Link
         href={`/book?date=${date}`}
-        className="block text-center rounded-lg bg-blue-600 text-white py-3 font-medium hover:bg-blue-700 transition"
+        className="button-primary w-full"
       >
         この日の予約を申請する
       </Link>

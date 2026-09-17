@@ -147,11 +147,12 @@ export default async function AdminPage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-8">
+      <header><p className="eyebrow">DASHBOARD</p><h1 className="mt-2 text-2xl font-bold">予約の管理</h1><p className="mt-2 text-sm text-slate-600">申請内容と前後の予定を確認して、承認・却下できます。</p></header>
       <Link
         href="/admin/schedule"
-        className="block text-center rounded-lg border border-gray-300 bg-white py-2.5 text-sm font-medium hover:bg-gray-100 transition"
+        className="button-primary w-full"
       >
-        自分の予定を登録する（バイトなど）→
+        自分の予定を登録・管理する →
       </Link>
 
       <section>
