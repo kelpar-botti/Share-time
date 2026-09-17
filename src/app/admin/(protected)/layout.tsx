@@ -18,7 +18,7 @@ export default async function ProtectedAdminLayout({
   return (
     <div className="flex-1 flex flex-col">
       <header className="border-b border-gray-200 bg-white px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <Link href="/admin" className="flex min-h-11 items-center gap-3 font-bold text-slate-900">Share Time <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">管理画面</span></Link>
+        <Link href="/" aria-label="Share Time：カレンダーに戻る" className="flex min-h-11 items-center gap-3 font-bold text-slate-900">Share Time <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">管理画面</span></Link>
         <nav aria-label="管理画面のナビゲーション" className="flex flex-wrap items-center gap-4">
           <Link href="/" className="button-secondary">
             通常のページに戻る

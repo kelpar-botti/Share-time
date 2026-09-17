@@ -34,7 +34,7 @@ export default async function DayPage({ searchParams }: Props) {
       <Link href={`/?month=${date.slice(0, 7)}`} className="text-sm text-blue-600 hover:underline">
         ← 月間カレンダーに戻る
       </Link>
-      <p className="eyebrow mt-5">SHARE TIME</p>
+      <p className="eyebrow mt-5"><Link href="/" aria-label="Share Time：カレンダーに戻る" className="inline-flex min-h-11 items-center rounded hover:underline">SHARE TIME</Link></p>
       <h1 className="text-2xl font-bold mt-2 mb-1">この日の予定</h1>
       <p className="text-sm text-gray-500 mb-6">
         24時間いつでも空いている時間帯を選んで予約を申請できます。

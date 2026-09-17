@@ -23,7 +23,7 @@ export default async function HomePage({ searchParams }: Props) {
   return (
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8 sm:py-12">
       <header className="mb-7">
-        <p className="eyebrow">SHARE TIME</p>
+        <p className="eyebrow"><Link href="/" aria-label="Share Time：カレンダーに戻る" className="inline-flex min-h-11 items-center rounded hover:underline">SHARE TIME</Link></p>
         <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">空いている時間を、<br className="sm:hidden" />見つけよう。</h1>
         <p className="mt-4 text-sm leading-relaxed text-slate-600">日付を選んで空き時間を確認し、予約を申請できます。</p>
         <ol aria-label="予約の流れ" className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-sm text-slate-600">
