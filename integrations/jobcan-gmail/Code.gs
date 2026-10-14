@@ -20,7 +20,9 @@ function setup() {
       if (trigger.getHandlerFunction() === SHARE_TIME_SYNC_HANDLER) ScriptApp.deleteTrigger(trigger);
     });
     ScriptApp.newTrigger(SHARE_TIME_SYNC_HANDLER).timeBased().everyMinutes(5).create();
-    return { ok: true, intervalMinutes: 5 };
+    var result = { ok: true, intervalMinutes: 5 };
+    console.log(JSON.stringify(result));
+    return result;
   } catch (error) {
     throw sanitizedFailure_(error);
   } finally {
@@ -36,7 +38,9 @@ function stop() {
     ScriptApp.getProjectTriggers().forEach(function(trigger) {
       if (trigger.getHandlerFunction() === SHARE_TIME_SYNC_HANDLER) ScriptApp.deleteTrigger(trigger);
     });
-    return { ok: true, stopped: true };
+    var result = { ok: true, stopped: true };
+    console.log(JSON.stringify(result));
+    return result;
   } catch (error) {
     throw sanitizedFailure_(error);
   } finally {
@@ -44,14 +48,46 @@ function stop() {
   }
 }
 
-/** Runs quietly when no new confirmation exists. Failures are retried next run. */
+/** Log successful counts for the execution screen. Failures are retried next run. */
 function syncConfirmedShifts() {
-  return runNotifications_(false);
+  var result = runNotifications_(false);
+  if (result.ok === true && !result.skipped) console.log(JSON.stringify(result));
+  return result;
 }
 
 /** Read and preview the latest confirmation for each relevant month without saving. */
 function previewLatest() {
-  return runNotifications_(true);
+  var result = runNotifications_(true);
+  if (result.ok === true && !result.skipped) console.log(JSON.stringify(safePreviewLog_(result)));
+  return result;
+}
+
+/** Log only known preview fields; never copy arbitrary API fields or diagnostics. */
+function safePreviewLog_(result) {
+  return { ok: true, dryRun: true, results: result.results.map(function(entry) {
+    var source = entry.result;
+    var preview = { ok: true, dryRun: true, persisted: false, month: entry.notification.month };
+    if (typeof source.skipped === 'boolean') preview.skipped = source.skipped;
+    if (['already_processed', 'stale_notification', 'old_month', 'unchanged'].indexOf(source.reason) !== -1) {
+      preview.reason = source.reason;
+    }
+    ['created', 'updated', 'cancelled', 'unchanged', 'skippedPast', 'conflicts'].forEach(function(key) {
+      if (typeof source[key] === 'number' && isFinite(source[key]) && source[key] >= 0) preview[key] = source[key];
+    });
+    if (Array.isArray(source.shifts)) {
+      preview.shifts = source.shifts.map(function(shift) {
+        if (!shift || !/^\d{4}-\d{2}-\d{2}$/.test(shift.date || '') ||
+            !/^([01]\d|2[0-3]):[0-5]\d$/.test(shift.startTime || '') ||
+            !/^([01]\d|2[0-3]):[0-5]\d$/.test(shift.endTime || '')) return null;
+        return { date: shift.date, startTime: shift.startTime, endTime: shift.endTime };
+      }).filter(function(shift) { return shift !== null; });
+    }
+    var notification = entry.notification;
+    return { notification: {
+      id: notification.id, sentAt: notification.sentAt, receivedAt: notification.receivedAt,
+      subject: notification.subject, month: notification.month,
+    }, result: preview };
+  }) };
 }
 
 function runNotifications_(dryRun) {
@@ -229,7 +265,10 @@ function postNotification_(config, notification, dryRun) {
   } catch (error) {
     throw safeFailure_('ENDPOINT_NETWORK_ERROR');
   }
-  if (response.getResponseCode() !== 200) throw safeFailure_('ENDPOINT_HTTP_' + response.getResponseCode());
+  if (response.getResponseCode() !== 200) {
+    var safeCode = safeEndpointErrorCode_(response);
+    throw safeFailure_('ENDPOINT_HTTP_' + response.getResponseCode() + (safeCode ? '_' + safeCode : ''));
+  }
   var result = parseJson_(response, 'INVALID_ENDPOINT_JSON');
   if (!result || result.ok !== true) throw safeFailure_('ENDPOINT_REJECTED');
   if (dryRun) {
@@ -238,6 +277,24 @@ function postNotification_(config, notification, dryRun) {
     throw safeFailure_('PERSISTENCE_NOT_CONFIRMED');
   }
   return result;
+}
+
+/** Expose fixed server codes in exceptions without its body, message or credentials. */
+function safeEndpointErrorCode_(response) {
+  var allowed = [
+    'JOBCAN_PARSE', 'JOBCAN_LOGIN', 'JOBCAN_INCOMPLETE', 'JOBCAN_NETWORK',
+    'JOBCAN_TIMEOUT', 'JOBCAN_CONFIG', 'JOBCAN_IDENTITY',
+    'SYNC_BUSY', 'SYNC_LEASE_LOST', 'SYNC_FAILED', 'CONFIG_REQUIRED', 'NOT_ENABLED',
+    'INVALID_NOTIFICATION', 'UNAUTHORIZED', 'SERVICE_ONLY', 'BODY_TOO_LARGE',
+    'INVALID_JSON', 'METHOD_NOT_ALLOWED',
+  ];
+  try {
+    var parsed = JSON.parse(response.getContentText());
+    var code = parsed && parsed.error && parsed.error.code;
+    return typeof code === 'string' && /^[A-Z_]{1,40}$/.test(code) && allowed.indexOf(code) !== -1 ? code : '';
+  } catch (error) {
+    return '';
+  }
 }
 
 function parseJson_(response, code) {

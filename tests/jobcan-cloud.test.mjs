@@ -25,6 +25,7 @@ function harness({ messages = [], locked = false, endpointReply, fetchError, ext
     SHARE_TIME_SYNC_URL: endpoint, SHARE_TIME_SYNC_TOKEN: applicationToken, ...extraProperties,
   };
   const calls = [];
+  const logs = [];
   const triggers = [];
   let lockReleases = 0;
   let createdCount = 0;
@@ -47,6 +48,11 @@ function harness({ messages = [], locked = false, endpointReply, fetchError, ext
   }
   const context = vm.createContext({
     Date: FrozenDate,
+    console: {
+      log(value) { assert.equal(typeof value, 'string'); logs.push(value); },
+      error() { assert.fail('exceptions must never be logged'); },
+      warn() { assert.fail('diagnostics must never be logged'); },
+    },
     PropertiesService: { getScriptProperties: () => properties },
     LockService: { getScriptLock: () => ({ tryLock: () => !locked, releaseLock() { lockReleases++; } }) },
     Utilities: {
@@ -106,7 +112,7 @@ function harness({ messages = [], locked = false, endpointReply, fetchError, ext
   });
   vm.runInContext(source, context, { filename: 'Code.gs' });
   return {
-    context, calls, saved, triggers, trigger,
+    context, calls, logs, saved, triggers, trigger,
     get lockReleases() { return lockReleases; },
     get createdCount() { return createdCount; },
     posts() { return calls.filter(call => call.url === endpoint); },
@@ -122,6 +128,9 @@ test('setup validates properties and installs exactly one five-minute trigger, p
   assert.equal(h.createdCount, 2);
   assert.equal(h.calls.length, 0);
   assert.equal(h.lockReleases, 2);
+  assert.deepEqual(h.logs.map(value => JSON.parse(value)), [
+    { ok: true, intervalMinutes: 5 }, { ok: true, intervalMinutes: 5 },
+  ]);
 });
 
 test('configuration error cannot install trigger or send credentials to another destination', () => {
@@ -136,6 +145,7 @@ test('configuration error cannot install trigger or send credentials to another 
     assert.equal(h.triggers.length, 0);
     assert.equal(h.calls.length, 0);
     assert.equal(h.lockReleases, 1);
+    assert.deepEqual(h.logs, []);
   }
 });
 
@@ -144,6 +154,7 @@ test('stop removes only this handler triggers', () => {
   h.triggers.push(h.trigger('unrelated'), h.trigger('syncConfirmedShifts'), h.trigger('syncConfirmedShifts'));
   h.context.stop();
   assert.deepEqual(h.triggers.map(item => item.handler), ['unrelated']);
+  assert.deepEqual(h.logs.map(value => JSON.parse(value)), [{ ok: true, stopped: true }]);
 });
 
 test('lock contention is quiet and does not read mail or change processed state', () => {
@@ -151,6 +162,7 @@ test('lock contention is quiet and does not read mail or change processed state'
   assert.equal(h.context.syncConfirmedShifts().skipped, 'busy');
   assert.equal(h.calls.length, 0);
   assert.equal(h.lockReleases, 0);
+  assert.deepEqual(h.logs, []);
 });
 
 test('empty mailbox is quiet, metadata-only requests never read bodies or mutate Gmail', () => {
@@ -158,6 +170,7 @@ test('empty mailbox is quiet, metadata-only requests never read bodies or mutate
   assert.equal(h.context.syncConfirmedShifts().processed, 0);
   assert.equal(h.posts().length, 0);
   assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.logs.map(value => JSON.parse(value)), [{ ok: true, processed: 0 }]);
 });
 
 test('latest confirmation per month uses arrival ordering and syncs each notification once', () => {
@@ -175,6 +188,9 @@ test('latest confirmation per month uses arrival ordering and syncs each notific
   assert.equal(h.saved.SHARE_TIME_DONE_older, undefined);
   assert.equal(h.context.syncConfirmedShifts().processed, 0);
   assert.equal(h.posts().length, 1);
+  assert.deepEqual(h.logs.map(value => JSON.parse(value)), [
+    { ok: true, processed: 1 }, { ok: true, processed: 0 },
+  ]);
 });
 
 test('UTC/JST month boundary and December rollover use Date header instead of arrival/current date', () => {
@@ -251,6 +267,7 @@ test('HTTP 200 dry-run/config/unconfirmed results do not mark processed and retr
     assert.throws(() => h.context.syncConfirmedShifts(), /ShareTime sync:/);
     assert.equal(h.posts().length, 2);
     assert.equal(h.lockReleases, 2);
+    assert.deepEqual(h.logs, []);
   }
 });
 
@@ -259,6 +276,39 @@ test('retriable busy errors surface without immediate replay or processed marks'
   assert.throws(() => h.context.syncConfirmedShifts(), /ENDPOINT_HTTP_409/);
   assert.equal(h.posts().length, 1);
   assert.equal(h.saved.SHARE_TIME_DONE_a, undefined);
+  assert.deepEqual(h.logs, []);
+});
+
+test('non-200 known server error codes are diagnosable without exposing messages or logging failures', () => {
+  for (const code of ['JOBCAN_PARSE', 'JOBCAN_LOGIN', 'JOBCAN_INCOMPLETE', 'JOBCAN_NETWORK', 'JOBCAN_TIMEOUT', 'JOBCAN_CONFIG', 'JOBCAN_IDENTITY', 'SYNC_BUSY', 'CONFIG_REQUIRED']) {
+    const h = harness({ messages: [confirmation('a')], endpointReply: (payload, response) => response(502, {
+      ok: false, error: { code, message: `secret ${applicationToken} ${oauthToken}` }, password: 'mock-password',
+    }) });
+    assert.throws(() => h.context.previewLatest(), error => {
+      assert.equal(error.message, 'ShareTime sync: ENDPOINT_HTTP_502_' + code);
+      assert.equal(error.message.includes(applicationToken), false);
+      assert.equal(error.message.includes(oauthToken), false);
+      return true;
+    });
+    assert.deepEqual(h.logs, []);
+    assert.equal(h.saved.SHARE_TIME_DONE_a, undefined);
+    assert.equal(h.posts().length, 1);
+  }
+});
+
+test('unknown, malformed or credential-like server codes retain only the HTTP status', () => {
+  for (const data of [
+    '<html>upstream failure ' + applicationToken + '</html>',
+    { error: { code: 'JOBCAN_CUSTOM_UNKNOWN', message: applicationToken } },
+    { error: { code: 'SECRET_PASSWORD_TOKEN', message: oauthToken } },
+    { error: { code: 'JOBCAN_PARSE\n' + applicationToken } },
+    { error: { code: null } }, { error: { code: ['JOBCAN_PARSE'] } },
+    { error: 'JOBCAN_PARSE' }, null,
+  ]) {
+    const h = harness({ messages: [confirmation('a')], endpointReply: (payload, response) => response(502, data) });
+    assert.throws(() => h.context.previewLatest(), error => error.message === 'ShareTime sync: ENDPOINT_HTTP_502');
+    assert.deepEqual(h.logs, []);
+  }
 });
 
 test('network exceptions are sanitized and never include secrets or headers', () => {
@@ -271,6 +321,7 @@ test('network exceptions are sanitized and never include secrets or headers', ()
     assert.equal(error.message.includes(applicationToken), false);
     assert.equal(error.message.includes(oauthToken), false);
   }
+  assert.deepEqual(h.logs, []);
 });
 
 test('preview sends dryRun true, exposes only preview result and never marks a message processed', () => {
@@ -282,6 +333,34 @@ test('preview sends dryRun true, exposes only preview result and never marks a m
   assert.equal(h.saved.SHARE_TIME_DONE_a, undefined);
   assert.equal(h.context.syncConfirmedShifts().processed, 1);
   assert.equal(h.posts().length, 2);
+  const previewLog = JSON.parse(h.logs[0]);
+  assert.equal(previewLog.dryRun, true);
+  assert.equal(previewLog.results[0].notification.id, 'a');
+  assert.deepEqual(previewLog.results[0].result.shifts, []);
+  assert.deepEqual(JSON.parse(h.logs[1]), { ok: true, processed: 1 });
+});
+
+test('preview success log permits shift dates and notification metadata but strips secrets and arbitrary diagnostics', () => {
+  const h = harness({ messages: [confirmation('a')], endpointReply: (payload, response) => response(200, {
+    ok: true, dryRun: true, persisted: false, created: 1,
+    token: applicationToken, password: 'mock-password-do-not-log', error: oauthToken,
+    reason: applicationToken, details: { Authorization: oauthToken },
+    shifts: [{
+      date: '2026-10-20', startTime: '12:00', endTime: '21:00',
+      password: 'mock-password-do-not-log', token: applicationToken,
+    }],
+  }) });
+  const returned = h.context.previewLatest();
+  assert.equal(returned.results[0].result.token, applicationToken, 'return value remains unchanged');
+  assert.equal(h.logs.length, 1);
+  const logged = JSON.parse(h.logs[0]);
+  assert.deepEqual(logged.results[0].result, {
+    ok: true, dryRun: true, persisted: false, month: '2026-10', created: 1,
+    shifts: [{ date: '2026-10-20', startTime: '12:00', endTime: '21:00' }],
+  });
+  for (const secret of [applicationToken, oauthToken, 'mock-password-do-not-log']) {
+    assert.equal(h.logs[0].includes(secret), false);
+  }
 });
 
 test('processed state pruning preserves configuration and unrelated properties', () => {

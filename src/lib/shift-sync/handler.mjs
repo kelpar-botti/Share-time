@@ -1,8 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createSyncService } from './service.mjs';
-import { fetchConfirmedMonth } from './jobcan.mjs';
+import { fetchConfirmedMonth, JOBCAN_DIAGNOSTIC_REASONS } from './jobcan.mjs';
 
 const MAX_BODY_BYTES = 4096;
+const jobcanReasons = new Set(JOBCAN_DIAGNOSTIC_REASONS);
+const jobcanCodes = new Set(['JOBCAN_PARSE', 'JOBCAN_LOGIN', 'JOBCAN_NETWORK', 'JOBCAN_TIMEOUT', 'JOBCAN_CONFIG', 'JOBCAN_IDENTITY', 'JOBCAN_INCOMPLETE']);
 function reply(value, status = 200) {
   return Response.json(value, { status, headers: { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' } });
 }
@@ -71,6 +73,8 @@ export function createShiftSyncHandler({ getDb, env = () => process.env, fetchMo
       const code = failure?.code;
       if (code === 'SYNC_BUSY' || code === 'SYNC_LEASE_LOST') return error(code, '同期中です。次回の自動実行で再確認します。', 409);
       if (typeof code === 'string' && code.startsWith('JOBCAN_')) {
+        // Log fixed labels only. Never log the exception, message, URL, account or credential.
+        console.warn('Share Time Jobcan diagnostic', jobcanCodes.has(code) ? code : 'JOBCAN_UNKNOWN', jobcanReasons.has(failure?.reason) ? failure.reason : 'UNSPECIFIED');
         return error(code, code === 'JOBCAN_LOGIN' ? 'ジョブカンのモバイルログインを確認してください。' : 'ジョブカンの確定シフトを安全に取得できませんでした。予定は変更していません。', 502);
       }
       if (failure instanceof TypeError || failure instanceof RangeError || code === 'INVALID_NOTIFICATION') {

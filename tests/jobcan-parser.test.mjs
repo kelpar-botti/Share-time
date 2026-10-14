@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeTimeRange, parseDayDetail, parseMonthListing, fetchConfirmedMonth, reserveNineHours } from '../src/lib/shift-sync/jobcan.mjs';
+import { normalizeTimeRange, parseDayDetail, parseMonthListing, fetchConfirmedMonth, reserveNineHours, validateDayDetailUrl, JobcanError } from '../src/lib/shift-sync/jobcan.mjs';
 
 const url = 'https://ssl.jobcan.jp/m/shift-pattern-request/shiftdefinition/year/2026/month/10';
 const dayPath = day => `/m/shift-pattern-request/request?year=2026&month=10&day=${String(day).padStart(2,'0')}&_m=def`;
@@ -32,8 +32,9 @@ function detailHtml({ day = 15, confirmed = 'アルバイト）早番(9:30～18:
 }
 const config = { clientId:'test', email:'x@example.test', password:'test', expectedStaffCode:'11924' };
 const loginHtml = '<form method="post" action="/login/mb-employee"><input name="token" value="test-token"><input name="client_id"><input name="email"><input name="password" type="password"></form>';
-function fakeSession({ staffCode = '11924', allOff = false, badDay = 0 } = {}) {
+function fakeSession({ staffCode = '11924', allOff = false, badDay = 0, detailRedirect } = {}) {
   const calls = [];
+  const redirectedDays = new Set();
   const fetchImpl = async (input, options) => {
     calls.push({input,options});
     const parsed = new URL(input);
@@ -42,6 +43,10 @@ function fakeSession({ staffCode = '11924', allOff = false, badDay = 0 } = {}) {
     if (parsed.pathname.includes('/shiftdefinition/')) return new Response(monthHtml({ content: '' }));
     if (parsed.pathname === '/m/shift-pattern-request/request') {
       const day = Number(parsed.searchParams.get('day'));
+      if (detailRedirect && !redirectedDays.has(day)) {
+        redirectedDays.add(day);
+        return new Response('', {status:302,headers:{location:detailRedirect(day)}});
+      }
       if (day === badDay) return new Response(detailHtml({day, confirmed:'調整中'}));
       return new Response(detailHtml({day,confirmed: day === 15 && !allOff ? '短時間(10:00～14:30)' : '-'}));
     }
@@ -172,4 +177,48 @@ test('network errors expose safe codes and never transport exception URLs or sec
   for (const [error,code] of [[new TypeError('private URL and password'), 'JOBCAN_NETWORK'],[new DOMException('private token','TimeoutError'),'JOBCAN_TIMEOUT']]) {
     await assert.rejects(fetchConfirmedMonth('2026-10',{...config,fetchImpl:async () => {throw error;}}), value => value.code === code && !/private|password|token/.test(value.message));
   }
+});
+
+test('diagnostic reasons identify failing checks using fixed labels', () => {
+  assert.throws(() => parseMonthListing(monthHtml(),'2026-10',`${url}/extra`), {code:'JOBCAN_PARSE',reason:'MONTH_URL'});
+  assert.throws(() => parseMonthListing(monthHtml({missing:31}),'2026-10',url), {code:'JOBCAN_INCOMPLETE',reason:'MONTH_COVERAGE'});
+  assert.throws(() => parseMonthListing(monthHtml().replace('shift-left active','shift-left'),'2026-10',url), {code:'JOBCAN_PARSE',reason:'MONTH_TAB'});
+  assert.throws(() => parseDayDetail(detailHtml({day:16}),'2026-10-15'), {code:'JOBCAN_PARSE',reason:'DETAIL_DATE'});
+  assert.throws(() => parseDayDetail(detailHtml({confirmed:''}),'2026-10-15'), {code:'JOBCAN_PARSE',reason:'DETAIL_TIME'});
+  assert.throws(() => parseDayDetail(detailHtml().replace('確定シフト</td>','勤務実績</td>'),'2026-10-15'), {code:'JOBCAN_PARSE',reason:'DETAIL_STRUCTURE'});
+  assert.equal(new JobcanError('JOBCAN_PARSE','private message','https://private.example/?token=secret').reason,'');
+  assert.equal(new JobcanError('JOBCAN_PARSE','private message','SECRETUPPERCASEVALUE').reason,'');
+});
+test('detail final URLs allow query reordering, optional confirmed marker and numeric date padding', () => {
+  const base = 'https://ssl.jobcan.jp/m/shift-pattern-request/request';
+  for (const query of ['year=2026&month=10&day=01&_m=def','day=1&month=10&year=2026','_m=def&day=01&year=2026&month=10']) {
+    assert.equal(validateDayDetailUrl(`${base}?${query}`,'2026-10-01').origin,'https://ssl.jobcan.jp');
+  }
+});
+test('detail final URLs reject other dates, origins, paths, duplicate keys, unknown query or application marker', () => {
+  const base = 'https://ssl.jobcan.jp/m/shift-pattern-request/request';
+  const urls = [
+    `${base}?year=2026&month=10&day=2`,
+    `${base}?year=2026&month=11&day=1`,
+    `${base}?year=2025&month=10&day=1`,
+    `${base}?year=2026&month=10&day=1&_m=req`,
+    `${base}?year=2026&month=10&day=1&extra=true`,
+    `${base}?year=2026&month=10&day=1&day=01`,
+    `${base}?year=2026&month=10&day=1#fragment`,
+    `${base}/other?year=2026&month=10&day=1`,
+    `${base.replace('ssl.jobcan.jp','example.org')}?year=2026&month=10&day=1`,
+  ];
+  for (const value of urls) assert.throws(() => validateDayDetailUrl(value,'2026-10-01'), {reason:'DETAIL_URL'});
+});
+test('HTTP fetch accepts observed detail redirects while retaining day and own-section validation', async () => {
+  const fake = fakeSession({detailRedirect:day => `/m/shift-pattern-request/request?day=${day}&month=10&year=2026`});
+  const snapshot = await fetchConfirmedMonth('2026-10',{...config,fetchImpl:fake.fetchImpl});
+  assert.equal(fake.calls.length,65);
+  assert.equal(snapshot.coveredDates.length,31);
+  assert.deepEqual(snapshot.shifts,[{date:'2026-10-15',startTime:'10:00',endTime:'19:00'}]);
+});
+test('malformed public login forms report LOGIN_FORM before any POST', async () => {
+  let calls = 0;
+  await assert.rejects(fetchConfirmedMonth('2026-10',{...config,fetchImpl:async () => {calls++;return new Response('<form></form>');}}),{code:'JOBCAN_PARSE',reason:'LOGIN_FORM'});
+  assert.equal(calls,1);
 });
