@@ -242,3 +242,57 @@ test('malformed public login forms report LOGIN_FORM before any POST', async () 
   await assert.rejects(fetchConfirmedMonth('2026-10',{...config,fetchImpl:async () => {calls++;return new Response('<form></form>');}}),{code:'JOBCAN_PARSE',reason:'LOGIN_FORM'});
   assert.equal(calls,1);
 });
+
+test('detail workers are bounded to three and preserve complete date-ordered results', async () => {
+  const fake = fakeSession();
+  let active=0,maximum=0,finished=0;
+  const fetchImpl=async(input,options)=>{
+    const parsed=new URL(input);
+    if(parsed.pathname!=='/m/shift-pattern-request/request') return fake.fetchImpl(input,options);
+    const day=Number(parsed.searchParams.get('day'));
+    active++;maximum=Math.max(maximum,active);
+    try {
+      await new Promise(resolve=>setTimeout(resolve,day%3===0?1:4));
+      // Several actual shifts ensure completion order cannot affect output order.
+      return new Response(detailHtml({day,confirmed:[2,15,30].includes(day)?'短時間(10:00～14:30)':'-'}));
+    } finally {active--;finished++;}
+  };
+  const snapshot=await fetchConfirmedMonth('2026-10',{...config,fetchImpl});
+  assert.equal(maximum,3);assert.equal(active,0);assert.equal(finished,31);
+  assert.equal(snapshot.coveredDates.length,31);
+  assert.deepEqual(snapshot.shifts,[2,15,30].map(day=>({date:`2026-10-${String(day).padStart(2,'0')}`,startTime:'10:00',endTime:'19:00'})));
+});
+test('parse failure stops new detail requests and waits for all started workers before rejection', async () => {
+  const fake=fakeSession();
+  let active=0,started=0,finished=0;
+  const fetchImpl=async(input,options)=>{
+    const parsed=new URL(input);
+    if(parsed.pathname!=='/m/shift-pattern-request/request') return fake.fetchImpl(input,options);
+    const day=Number(parsed.searchParams.get('day'));
+    active++;started++;
+    try {
+      await new Promise(resolve=>setTimeout(resolve,day===1?1:20));
+      return new Response(detailHtml({day,confirmed:day===1?'調整中':'-'}));
+    } finally {active--;finished++;}
+  };
+  await assert.rejects(fetchConfirmedMonth('2026-10',{...config,fetchImpl}),{code:'JOBCAN_INCOMPLETE',reason:'UNPUBLISHED'});
+  assert.equal(started,3);assert.equal(finished,3);assert.equal(active,0);
+});
+test('workers propagate the original JobcanError after sibling requests settle', async () => {
+  const fake=fakeSession();
+  const original=new JobcanError('JOBCAN_NETWORK','safe message','REQUEST_NETWORK');
+  let active=0,finished=0;
+  const fetchImpl=async(input,options)=>{
+    const parsed=new URL(input);
+    if(parsed.pathname!=='/m/shift-pattern-request/request') return fake.fetchImpl(input,options);
+    const day=Number(parsed.searchParams.get('day'));
+    active++;
+    try {
+      await new Promise(resolve=>setTimeout(resolve,day===1?1:20));
+      if(day===1)throw original;
+      return new Response(detailHtml({day,confirmed:'-'}));
+    } finally {active--;finished++;}
+  };
+  await assert.rejects(fetchConfirmedMonth('2026-10',{...config,fetchImpl}),error=>error===original);
+  assert.equal(finished,3);assert.equal(active,0);
+});

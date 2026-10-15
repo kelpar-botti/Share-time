@@ -249,12 +249,27 @@ export async function fetchConfirmedMonth(month, { clientId, email, password, ex
   }
   const listing = await session.request(`${MONTH_PATH}/year/${year}/month/${number}`);
   const parsed = parseMonthListing(listing.html, month, listing.url);
-  const shifts = [];
-  for (const row of parsed.rows) {
-    const detail = await session.request(row.detailUrl);
-    validateDayDetailUrl(detail.url, row.date);
-    const shift = parseDayDetail(detail.html, row.date);
-    if (shift) shifts.push(shift);
-  }
+  const results = new Array(parsed.rows.length);
+  let next = 0;
+  let completed = 0;
+  let failure;
+  const worker = async () => {
+    while (!failure && next < parsed.rows.length) {
+      const index = next++;
+      const row = parsed.rows[index];
+      try {
+        const detail = await session.request(row.detailUrl);
+        validateDayDetailUrl(detail.url, row.date);
+        results[index] = parseDayDetail(detail.html, row.date);
+        completed++;
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+  };
+  await Promise.allSettled(Array.from({ length: Math.min(3, parsed.rows.length) }, worker));
+  if (failure) throw failure;
+  if (completed !== parsed.rows.length) fail('JOBCAN_INCOMPLETE', '一か月分の全日付を取得できませんでした。', 'MONTH_COVERAGE');
+  const shifts = results.filter(Boolean); // Index-aligned results preserve date order despite concurrent completion.
   return reserveNineHours({ month, complete: true, coveredDates: parsed.rows.map(row => row.date), shifts });
 }
