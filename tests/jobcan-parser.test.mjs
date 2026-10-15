@@ -72,12 +72,20 @@ test('nested data03 wrappers may expose the same month heading more than once', 
   const parsed = parseMonthListing(html,'2026-10',url);
   assert.equal(parsed.rows.length,31);
 });
-test('repeated matching navigation headings are accepted but missing or mixed months fail closed', () => {
+test('optional navigation accepts matching repeats or unreadable labels but rejects a readable different month', () => {
   const same = `${monthHtml()}<table class="data03"><tr><th>2026年10月度</th></tr></table>`;
   assert.equal(parseMonthListing(same,'2026-10',url).rows.length,31);
   const mixed = `${monthHtml()}<table class="data03"><tr><th>2026年09月度</th></tr></table>`;
   assert.throws(() => parseMonthListing(mixed,'2026-10',url),{code:'JOBCAN_PARSE',reason:'MONTH_NAV_MISMATCH'});
-  assert.throws(() => parseMonthListing(monthHtml({nav:'不明'}),'2026-10',url),{code:'JOBCAN_PARSE',reason:'MONTH_NAV_MISSING'});
+  assert.equal(parseMonthListing(monthHtml({nav:'不明'}),'2026-10',url).rows.length,31);
+  assert.equal(parseMonthListing(monthHtml({nav:'2026年10月'}),'2026-10',url).rows.length,31);
+  assert.throws(() => parseMonthListing(monthHtml({nav:'2026年09月'}),'2026-10',url),{code:'JOBCAN_PARSE',reason:'MONTH_NAV_MISMATCH'});
+});
+test('unreadable navigation still requires complete date coverage and matching month links', () => {
+  assert.throws(() => parseMonthListing(monthHtml({nav:'不明',missing:31}),'2026-10',url),{code:'JOBCAN_INCOMPLETE',reason:'MONTH_COVERAGE'});
+  const cells=Array.from({length:31},(_,i)=>cellHtml(i+1));
+  cells[0]=cellHtml(1,{link:dayPath(1).replace('month=10','month=11')});
+  assert.throws(() => parseMonthListing(monthHtml({nav:'不明',cells}),'2026-10',url),{code:'JOBCAN_PARSE',reason:'MONTH_DAY_QUERY'});
 });
 test('wrong URL month, URL suffix, navigation month, missing date, duplicate date and login fail closed', () => {
   const duplicate = Array.from({length:31},(_,i) => cellHtml(i+1));

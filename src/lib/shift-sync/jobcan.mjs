@@ -118,8 +118,8 @@ export function parseMonthListing(html, month, currentUrl) {
   if (tab.length !== 1 || text(tab.text()) !== '確定シフト' || tab.find('a').length !== 1) fail('JOBCAN_PARSE', '確定シフトタブを確認できません。', 'MONTH_TAB');
   const tabUrl = safeUrl(tab.find('a').attr('href'), currentUrl, 'MONTH_TAB_LINK');
   if (tabUrl.pathname !== MONTH_PATH || tabUrl.search) fail('JOBCAN_PARSE', '確定シフトタブのリンクが不正です。', 'MONTH_TAB_LINK');
-  const navMonths = $('table.data03').toArray().flatMap(el => [...text($(el).text()).matchAll(/(\d{4})年\s*(\d{1,2})月度/g)]);
-  if (navMonths.length === 0) fail('JOBCAN_PARSE', '表示月を確認できません。', 'MONTH_NAV_MISSING');
+  // Navigation is an optional consistency check. Verified final URL and every date link establish coverage.
+  const navMonths = $('table.data03').toArray().flatMap(el => [...text($(el).text()).matchAll(/(\d{4})年\s*(\d{1,2})月(?:度)?/g)]);
   if (navMonths.some(match => Number(match[1]) !== year || Number(match[2]) !== number)) fail('JOBCAN_PARSE', '表示月が対象月と一致しません。', 'MONTH_NAV_MISMATCH');
   if ($('table#calendar').length !== 1) fail('JOBCAN_PARSE', '確定シフトのカレンダーを確認できません。', 'MONTH_GRID');
   const rows = new Map();
