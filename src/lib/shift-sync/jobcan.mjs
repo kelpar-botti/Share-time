@@ -7,7 +7,7 @@ const DETAIL_PATH = '/m/shift-pattern-request/request';
 export const JOBCAN_DIAGNOSTIC_REASONS = Object.freeze([
   'MONTH_FORMAT', 'YEAR_FORMAT', 'URL_FORMAT', 'URL_ORIGIN', 'TIME_FORMAT', 'TIME_START', 'TIME_DURATION',
   'LOGIN_PAGE', 'UNPUBLISHED', 'DETAIL_DATE', 'DETAIL_STRUCTURE', 'DETAIL_TIME', 'DETAIL_URL',
-  'MONTH_URL', 'MONTH_HEADING', 'MONTH_TAB', 'MONTH_TAB_LINK', 'MONTH_NAV', 'MONTH_GRID',
+  'MONTH_URL', 'MONTH_HEADING', 'MONTH_TAB', 'MONTH_TAB_LINK', 'MONTH_NAV', 'MONTH_NAV_MISSING', 'MONTH_NAV_MISMATCH', 'MONTH_GRID',
   'MONTH_DAY_LINK', 'MONTH_DAY_QUERY', 'MONTH_DAY_NUMBER', 'MONTH_DAY_LABEL', 'MONTH_DUPLICATE', 'MONTH_COVERAGE',
   'SNAPSHOT_FORMAT', 'START_TIME', 'REQUEST_TIMEOUT', 'REQUEST_REDIRECT', 'REQUEST_HTTP', 'REQUEST_NETWORK',
   'PAGE_SIZE', 'LOGIN_CONFIG', 'STAFF_CONFIG', 'LOGIN_FORM', 'LOGIN_ACTION', 'STAFF_IDENTITY',
@@ -119,7 +119,8 @@ export function parseMonthListing(html, month, currentUrl) {
   const tabUrl = safeUrl(tab.find('a').attr('href'), currentUrl, 'MONTH_TAB_LINK');
   if (tabUrl.pathname !== MONTH_PATH || tabUrl.search) fail('JOBCAN_PARSE', '確定シフトタブのリンクが不正です。', 'MONTH_TAB_LINK');
   const navMonths = $('table.data03').toArray().flatMap(el => [...text($(el).text()).matchAll(/(\d{4})年\s*(\d{1,2})月度/g)]);
-  if (navMonths.length !== 1 || Number(navMonths[0][1]) !== year || Number(navMonths[0][2]) !== number) fail('JOBCAN_PARSE', '表示月が対象月と一致しません。', 'MONTH_NAV');
+  if (navMonths.length === 0) fail('JOBCAN_PARSE', '表示月を確認できません。', 'MONTH_NAV_MISSING');
+  if (navMonths.some(match => Number(match[1]) !== year || Number(match[2]) !== number)) fail('JOBCAN_PARSE', '表示月が対象月と一致しません。', 'MONTH_NAV_MISMATCH');
   if ($('table#calendar').length !== 1) fail('JOBCAN_PARSE', '確定シフトのカレンダーを確認できません。', 'MONTH_GRID');
   const rows = new Map();
   $('table#calendar').children('tbody').children('tr').children('td').each((_, el) => {

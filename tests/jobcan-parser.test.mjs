@@ -67,6 +67,18 @@ test('actual month grid returns all dates and observed detail URLs, including bl
   assert.deepEqual(parsed.rows[14], {date:'2026-10-15',detailUrl:`https://ssl.jobcan.jp${dayPath(15)}`});
   assert.equal(parsed.rows[30].date,'2026-10-31');
 });
+test('nested data03 wrappers may expose the same month heading more than once', () => {
+  const html = `<table class="data03"><tr><td>${monthHtml()}</td></tr></table>`;
+  const parsed = parseMonthListing(html,'2026-10',url);
+  assert.equal(parsed.rows.length,31);
+});
+test('repeated matching navigation headings are accepted but missing or mixed months fail closed', () => {
+  const same = `${monthHtml()}<table class="data03"><tr><th>2026年10月度</th></tr></table>`;
+  assert.equal(parseMonthListing(same,'2026-10',url).rows.length,31);
+  const mixed = `${monthHtml()}<table class="data03"><tr><th>2026年09月度</th></tr></table>`;
+  assert.throws(() => parseMonthListing(mixed,'2026-10',url),{code:'JOBCAN_PARSE',reason:'MONTH_NAV_MISMATCH'});
+  assert.throws(() => parseMonthListing(monthHtml({nav:'不明'}),'2026-10',url),{code:'JOBCAN_PARSE',reason:'MONTH_NAV_MISSING'});
+});
 test('wrong URL month, URL suffix, navigation month, missing date, duplicate date and login fail closed', () => {
   const duplicate = Array.from({length:31},(_,i) => cellHtml(i+1));
   duplicate[30] = cellHtml(30);
