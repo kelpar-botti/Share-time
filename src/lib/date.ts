@@ -12,7 +12,13 @@ export function todayInJapan(): string {
 }
 
 export function isValidDateString(value: string | undefined | null): value is string {
-  return !!value && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  // Date.UTC treats 0..99 specially as 1900..1999. Those ancient years are
+  // outside this calendar and must not silently point to another date.
+  if (year < 100 || month < 1 || month > 12 || day < 1) return false;
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 
 export function isValidTimeString(value: string | undefined | null): value is string {
@@ -74,7 +80,9 @@ export function currentMonthInJapan(): string {
 }
 
 export function isValidMonthString(value: string | undefined | null): value is string {
-  return !!value && /^\d{4}-\d{2}$/.test(value);
+  if (!value || !/^\d{4}-\d{2}$/.test(value)) return false;
+  const [year, month] = value.split("-").map(Number);
+  return year >= 100 && month >= 1 && month <= 12;
 }
 
 export function addMonths(monthStr: string, months: number): string {

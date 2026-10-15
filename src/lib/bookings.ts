@@ -3,6 +3,13 @@ import { randomBytes } from "crypto";
 import { getDb } from "./firebase-admin";
 import { addDays, crossesMidnight, timeToMinutes, toAbsoluteMinutes } from "./date";
 import type { Booking, BookingSource, BookingStatus } from "./types";
+import {
+  getDayAvailabilityRange,
+  occupiedDates,
+  RangeUnavailableError,
+  readVisitorRangeGuard,
+  touchVisitorRangeGuard,
+} from "./day-availability/closure.mjs";
 
 const COLLECTION = "bookings";
 
@@ -105,8 +112,14 @@ export async function isRangeAvailable(
   date: string,
   startTime: string,
   endTime: string,
-  excludeId?: string
+  excludeId?: string,
+  respectDayClosure = true
 ): Promise<boolean> {
+  if (respectDayClosure) {
+    const occupied = occupiedDates({ date, startTime, endTime });
+    const days = await getDayAvailabilityRange(getDb(), occupied[0], occupied[occupied.length - 1]);
+    if (days.some((day) => day.closed)) return false;
+  }
   const nearby = await getActiveBookingsForDateRange(addDays(date, -1), addDays(date, 1));
   const candidate: TimeRangeLike = { date, startTime, endTime };
   return !nearby.some((b) => b.id !== excludeId && rangesOverlap(b, candidate));
@@ -172,7 +185,11 @@ export async function createBookingRequest(input: {
     createdAt: now,
     updatedAt: now,
   };
-  await ref.set(data);
+  await getDb().runTransaction(async (transaction) => {
+    const guards = await readVisitorRangeGuard({ transaction, db: getDb(), range: input });
+    touchVisitorRangeGuard(transaction, guards, now);
+    transaction.set(ref, data);
+  });
   return { id: ref.id, ...data };
 }
 
@@ -248,28 +265,43 @@ export async function respondToBookingByToken(
   action: "approve" | "reject"
 ): Promise<RespondResult> {
   const ref = getDb().collection(COLLECTION).doc(id);
-  const doc = await ref.get();
-  if (!doc.exists) return { ok: false, reason: "not_found" };
+  return getDb().runTransaction(async (transaction): Promise<RespondResult> => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists) return { ok: false, reason: "not_found" };
 
-  const data = doc.data()!;
-  const expectedToken = action === "approve" ? data.approveToken : data.rejectToken;
-  if (!expectedToken || expectedToken !== token) {
-    return { ok: false, reason: "invalid_token" };
-  }
-  if (data.status !== "pending") {
-    return { ok: false, reason: "already_handled", status: data.status };
-  }
+    const data = doc.data()!;
+    const expectedToken = action === "approve" ? data.approveToken : data.rejectToken;
+    if (!expectedToken || expectedToken !== token) {
+      return { ok: false, reason: "invalid_token" };
+    }
+    if (data.status !== "pending") {
+      return { ok: false, reason: "already_handled", status: data.status };
+    }
 
-  const status: BookingStatus = action === "approve" ? "approved" : "rejected";
-  await ref.update({ status, updatedAt: new Date().toISOString() });
-  return { ok: true, status };
+    // Pending entries already held this time before closure. Approving them
+    // preserves that reservation; closure only refuses new booking/time writes.
+    const status: BookingStatus = action === "approve" ? "approved" : "rejected";
+    transaction.update(ref, { status, updatedAt: new Date().toISOString() });
+    return { ok: true, status };
+  });
 }
 
 export async function setBookingStatus(id: string, status: BookingStatus): Promise<void> {
-  await getDb()
-    .collection(COLLECTION)
-    .doc(id)
-    .update({ status, updatedAt: new Date().toISOString() });
+  const db = getDb();
+  const ref = db.collection(COLLECTION).doc(id);
+  await db.runTransaction(async (transaction) => {
+    const doc = await transaction.get(ref);
+    const data = doc.data();
+    if (!data) throw new Error("予約が見つかりません。");
+    const now = new Date().toISOString();
+    // Restoring a cancelled/rejected visitor entry introduces a new occupied
+    // range. It must pass the same closure check as a fresh visitor request.
+    if ((data.source ?? "visitor") === "visitor" && BLOCKING_STATUSES.includes(status) && !BLOCKING_STATUSES.includes(data.status)) {
+      const guards = await readVisitorRangeGuard({ transaction, db, range: data as TimeRangeLike, excludeBookingId: id });
+      touchVisitorRangeGuard(transaction, guards, now);
+    }
+    transaction.update(ref, { status, updatedAt: now });
+  });
 }
 
 type SetTitleVisibilityResult = { ok: true } | { ok: false; reason: "not_found" | "not_allowed" };
@@ -350,35 +382,37 @@ export async function updateBookingTimeByToken(
   startTime: string,
   endTime: string
 ): Promise<UpdateBookingTimeResult> {
-  const ref = getDb().collection(COLLECTION).doc(id);
-  const doc = await ref.get();
-  if (!doc.exists) return { ok: false, reason: "not_found" };
+  const db = getDb();
+  const ref = db.collection(COLLECTION).doc(id);
+  return db.runTransaction(async (transaction): Promise<UpdateBookingTimeResult> => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists) return { ok: false, reason: "not_found" };
 
-  const data = doc.data()!;
-  if (!data.titleToken || data.titleToken !== token) {
-    return { ok: false, reason: "invalid_token" };
-  }
-  if (data.status !== "approved") {
-    return { ok: false, reason: "not_approved" };
-  }
-  if (startTime === endTime || (startTime === data.startTime && endTime === data.endTime)) {
-    return { ok: false, reason: "same_time" };
-  }
+    const data = doc.data()!;
+    if (!data.titleToken || data.titleToken !== token) {
+      return { ok: false, reason: "invalid_token" };
+    }
+    if (data.status !== "approved") {
+      return { ok: false, reason: "not_approved" };
+    }
+    if (startTime === endTime || (startTime === data.startTime && endTime === data.endTime)) {
+      return { ok: false, reason: "same_time" };
+    }
 
-  const available = await isRangeAvailable(data.date, startTime, endTime, id);
-  if (!available) {
-    return { ok: false, reason: "taken" };
-  }
+    let guards;
+    try {
+      guards = await readVisitorRangeGuard({ transaction, db, range: { date: data.date, startTime, endTime }, excludeBookingId: id });
+    } catch (error) {
+      if (error instanceof RangeUnavailableError) return { ok: false, reason: "taken" };
+      throw error;
+    }
 
-  await ref.update({
-    startTime,
-    endTime,
-    status: "pending" as BookingStatus,
-    updatedAt: new Date().toISOString(),
+    const updatedAt = new Date().toISOString();
+    touchVisitorRangeGuard(transaction, guards, updatedAt);
+    transaction.update(ref, { startTime, endTime, status: "pending" as BookingStatus, updatedAt });
+
+    return { ok: true, booking: { ...docToBooking(doc), startTime, endTime, status: "pending", updatedAt } };
   });
-
-  const updated = await getBooking(id);
-  return { ok: true, booking: updated! };
 }
 
 /** All bookings, sorted by date/time; grouping into pending/history is left to the caller. */

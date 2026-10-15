@@ -8,6 +8,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import * as closure from "../src/lib/day-availability/closure.mjs";
 
 // Run the actual data functions, server actions and public pages against an
 // isolated in-memory Firestore substitute. Never connect to the real database.
@@ -17,27 +18,31 @@ function setup() {
   const revalidated = [];
   let signedIn = true;
   let sequence = 0;
-  const snapshot = id => ({ id, exists: records.has(id), data: () => records.get(id) });
-  const doc = (id = `test-${++sequence}`) => ({
+  const auxiliaryRecords = new Map();
+  const table = collection => collection === "bookings" ? records : auxiliaryRecords;
+  const key = (collection, id) => collection === "bookings" ? id : `${collection}/${id}`;
+  const snapshot = (collection, id) => ({ id, exists: table(collection).has(key(collection, id)), data: () => table(collection).get(key(collection, id)) });
+  const doc = (collection, id = `test-${++sequence}`) => ({
     id,
-    get: async () => snapshot(id),
-    set: async value => records.set(id, { ...value }),
-    update: async value => records.set(id, { ...records.get(id), ...value }),
+    get: async () => snapshot(collection, id),
+    set: async value => table(collection).set(key(collection, id), { ...value }),
+    update: async value => table(collection).set(key(collection, id), { ...table(collection).get(key(collection, id)), ...value }),
   });
-  const query = (filters = []) => ({
-    doc,
-    where: (field, operator, value) => query([...filters, [field, operator, value]]),
-    get: async () => ({ docs: [...records.keys()].filter(id => filters.every(([field, operator, value]) => {
-      const actual = records.get(id)[field];
+  const query = (collection, filters = []) => ({
+    doc: id => doc(collection, id),
+    where: (field, operator, value) => query(collection, [...filters, [field, operator, value]]),
+    get: async () => ({ docs: [...table(collection).keys()].filter(recordKey => collection === "bookings" || recordKey.startsWith(`${collection}/`)).map(recordKey => collection === "bookings" ? recordKey : recordKey.slice(collection.length + 1)).filter(id => filters.every(([field, operator, value]) => {
+      const actual = table(collection).get(key(collection, id))[field];
       return operator === "==" ? actual === value : operator === ">=" ? actual >= value : actual <= value;
-    })).map(snapshot) }),
+    })).map(id => snapshot(collection, id)) }),
   });
   const db = {
-    collection: () => query(),
+    collection: name => query(name),
     runTransaction: async callback => {
       const changes = [];
-      await callback({ get: ref => ref.get(), update: (ref, value) => changes.push([ref, value]) });
-      for (const [ref, value] of changes) await ref.update(value);
+      const result = await callback({ get: ref => ref.get(), update: (ref, value) => changes.push([ref, value, "update"]), set: (ref, value) => changes.push([ref, value, "set"]) });
+      for (const [ref, value, method] of changes) await ref[method](value);
+      return result;
     },
   };
   const stubs = {
@@ -61,6 +66,7 @@ function setup() {
     }).outputText;
     const imports = id => {
       if (id in stubs) return stubs[id];
+      if (id.endsWith("/day-availability/closure.mjs")) return closure;
       if (id.endsWith("/mailer") || id === "./mailer") return new Proxy({}, { get: () => async () => { throw new Error("Unexpected email"); } });
       if (id.startsWith(".") || id.startsWith("@/")) {
         const base = id.startsWith("@/") ? path.join(root, "src", id.slice(2)) : path.resolve(path.dirname(filename), id);

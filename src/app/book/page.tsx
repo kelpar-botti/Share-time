@@ -4,6 +4,10 @@ import { AdminLoginLink } from "@/components/AdminLoginLink";
 import { submitBookingRequest } from "@/lib/actions";
 import { getBookingsVisibleOnDate } from "@/lib/bookings";
 import { formatJapaneseDate, generateTimeOptions, isValidDateString } from "@/lib/date";
+import { getDb } from "@/lib/firebase-admin";
+import { getDayAvailability } from "@/lib/day-availability/closure.mjs";
+
+export const dynamic = "force-dynamic";
 
 type Props = {
   searchParams: Promise<{ date?: string; start?: string; end?: string; error?: string }>;
@@ -14,6 +18,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   email: "メールアドレスの形式が正しくありません。",
   range: "開始時刻と終了時刻が同じです。時間を変えてください。",
   taken: "その時間帯は他の予約と重なっています。別の時間をお選びください。",
+  closed: "選択した日程には終日受付停止の日が含まれます。別の日をお選びください。",
   titleRequired: "予定名を公開する場合は、予定名を入力してください。",
 };
 
@@ -25,8 +30,27 @@ export default async function BookPage({ searchParams }: Props) {
   }
 
   const times = generateTimeOptions();
-  const visible = await getBookingsVisibleOnDate(date);
+  const [visible, availability] = await Promise.all([
+    getBookingsVisibleOnDate(date),
+    getDayAvailability(getDb(), date),
+  ]);
   const errorMessage = error ? ERROR_MESSAGES[error] : undefined;
+
+  if (availability.closed) {
+    return (
+      <main className="mx-auto w-full max-w-md flex-1 px-4 py-8">
+        <Link href={`/day?date=${date}`} className="text-sm text-blue-600 hover:underline">← 予約状況に戻る</Link>
+        <h1 className="mt-4 text-xl font-bold">終日受付停止</h1>
+        <p className="mt-2 text-gray-600">{formatJapaneseDate(date)}</p>
+        <p className="mt-4 rounded-lg border border-slate-300 bg-slate-100 px-4 py-3 text-sm text-slate-700">
+          この日は新しい予約の受付を停止しています。別の日をお選びください。
+        </p>
+        {errorMessage && <p role="alert" className="mt-4 text-sm text-red-700">{errorMessage}</p>}
+        <Link href={`/?month=${date.slice(0, 7)}`} className="button-primary mt-5 w-full">別の日を選ぶ</Link>
+        <AdminLoginLink />
+      </main>
+    );
+  }
 
   return (
     <main className="mx-auto w-full max-w-md flex-1 px-4 py-8">

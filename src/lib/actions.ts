@@ -16,6 +16,7 @@ import {
   updateBookingTimeByToken,
 } from "./bookings";
 import { sendBookingChangeRequestEmail, sendBookingDecisionEmail, sendBookingRequestEmail } from "./mailer";
+import { RangeUnavailableError } from "./day-availability/closure.mjs";
 import {
   daysFromToday,
   enumerateDates,
@@ -118,21 +119,13 @@ export async function submitBookingRequest(formData: FormData): Promise<void> {
     backToForm("missing");
   }
 
-  const available = await isRangeAvailable(date, startTime, endTime);
-  if (!available) {
-    backToForm("taken");
+  let booking;
+  try {
+    booking = await createBookingRequest({ date, startTime, endTime, name, email, message, title, titlePublicAllowed });
+  } catch (error) {
+    if (error instanceof RangeUnavailableError) backToForm(error.code === "closed" ? "closed" : "taken");
+    throw error;
   }
-
-  const booking = await createBookingRequest({
-    date,
-    startTime,
-    endTime,
-    name,
-    email,
-    message,
-    title,
-    titlePublicAllowed,
-  });
   await sendEmailSafely(() => sendBookingRequestEmail(booking));
 
   toDone(booking.id, booking.titleToken);
@@ -324,7 +317,7 @@ export async function createOwnerScheduleBlocks(formData: FormData): Promise<voi
   const skipped: string[] = [];
 
   for (const date of validDates.sort()) {
-    const available = await isRangeAvailable(date, startTime, endTime);
+    const available = await isRangeAvailable(date, startTime, endTime, undefined, false);
     if (!available) {
       skipped.push(date);
       continue;

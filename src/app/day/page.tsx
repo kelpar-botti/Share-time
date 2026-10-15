@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { AdminLoginLink } from "@/components/AdminLoginLink";
 import { getBookingsVisibleOnDate } from "@/lib/bookings";
+import { getDb } from "@/lib/firebase-admin";
+import { getDayAvailability } from "@/lib/day-availability/closure.mjs";
 import {
   addDays,
   daysFromToday,
@@ -22,7 +24,10 @@ export default async function DayPage({ searchParams }: Props) {
   const date = isValidDateString(params.date) ? params.date : today;
   const offset = daysFromToday(date);
 
-  const visible = await getBookingsVisibleOnDate(date);
+  const [visible, availability] = await Promise.all([
+    getBookingsVisibleOnDate(date),
+    getDayAvailability(getDb(), date),
+  ]);
 
   const prevDate = addDays(date, -1);
   const nextDate = addDays(date, 1);
@@ -37,7 +42,7 @@ export default async function DayPage({ searchParams }: Props) {
       <p className="eyebrow mt-5"><Link href="/" aria-label="Share Time：カレンダーに戻る" className="inline-flex min-h-11 items-center rounded hover:underline">SHARE TIME</Link></p>
       <h1 className="text-2xl font-bold mt-2 mb-1">この日の予定</h1>
       <p className="text-sm text-gray-500 mb-6">
-        24時間いつでも空いている時間帯を選んで予約を申請できます。
+        {availability.closed ? "この日は終日、新しい予約の受付を停止しています。" : "24時間いつでも空いている時間帯を選んで予約を申請できます。"}
       </p>
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -68,6 +73,13 @@ export default async function DayPage({ searchParams }: Props) {
         )}
       </div>
 
+      {availability.closed && (
+        <div className="mb-5 rounded-lg border border-slate-300 bg-slate-100 px-4 py-3 text-slate-700">
+          <p className="font-semibold">終日受付停止</p>
+          <p className="mt-1 text-sm">この日は新しい予約を申請できません。別の日をお選びください。</p>
+        </div>
+      )}
+
       <div className="space-y-2 mb-6">
         {visible.length === 0 ? (
           <p className="text-sm text-gray-500 rounded-lg border border-gray-200 bg-white px-4 py-3">
@@ -90,12 +102,11 @@ export default async function DayPage({ searchParams }: Props) {
         )}
       </div>
 
-      <Link
-        href={`/book?date=${date}`}
-        className="button-primary w-full"
-      >
-        この日の予約を申請する
-      </Link>
+      {!availability.closed && (
+        <Link href={`/book?date=${date}`} className="button-primary w-full">
+          この日の予約を申請する
+        </Link>
+      )}
 
       <AdminLoginLink />
     </main>

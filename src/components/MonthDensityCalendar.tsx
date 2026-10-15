@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getActiveBookingsForDateRange, splitBookingMinutesByDate } from "@/lib/bookings";
 import { addDays, buildMonthGrid, formatJapaneseDate, formatJapaneseMonth, getMonthDateRange, getWeekday, todayInJapan, WEEKDAYS_JA } from "@/lib/date";
 import { isJapaneseHoliday } from "@/lib/holidays";
+import { getDb } from "@/lib/firebase-admin";
+import { getDayAvailabilityRange } from "@/lib/day-availability/closure.mjs";
 
 // Google Maps の混雑度表示のように、埋まっている割合が高いほど濃い青にする。
 // 背景色と文字色を別々に決めることで、日曜・祝日の赤文字をどの濃さの背景の上でも
@@ -58,7 +60,11 @@ export default async function MonthDensityCalendar({
   const [firstDay, lastDay] = getMonthDateRange(month);
   // Extend the fetch one day earlier than the grid so an overnight booking
   // that started the day before firstDay still counts toward firstDay.
-  const bookings = await getActiveBookingsForDateRange(addDays(firstDay, -1), lastDay);
+  const [bookings, availability] = await Promise.all([
+    getActiveBookingsForDateRange(addDays(firstDay, -1), lastDay),
+    getDayAvailabilityRange(getDb(), firstDay, lastDay),
+  ]);
+  const closedDates = new Set(availability.filter((day) => day.closed).map((day) => day.date));
 
   const minutesByDate = new Map<string, number>();
   for (const b of bookings) {
@@ -93,10 +99,11 @@ export default async function MonthDensityCalendar({
                 if (!date) return <td key={dayIndex} />;
                 const dayNumber = Number(date.slice(-2));
                 const ratio = (minutesByDate.get(date) ?? 0) / minutesPerDay;
+                const closed = closedDates.has(date);
                 const isToday = date === today;
                 const isHighlighted = date === highlightDate;
                 const isRedDay = getWeekday(date) === 0 || isJapaneseHoliday(date);
-                const textClass = isRedDay ? holidayTextClass(ratio) : densityTextClass(ratio);
+                const textClass = closed ? "text-slate-700" : isRedDay ? holidayTextClass(ratio) : densityTextClass(ratio);
                 const ring = isHighlighted
                   ? "ring-2 ring-offset-1 ring-amber-500"
                   : isToday
@@ -108,12 +115,11 @@ export default async function MonthDensityCalendar({
                       href={dayHref(date)}
                       target={openInNewTab ? "_blank" : undefined}
                       aria-current={isToday ? "date" : undefined}
-                      aria-label={`${formatJapaneseDate(date)}${isToday ? "、今日" : ""}、${ratio <= 0 ? "予定なし" : `予定あり（約${Math.round((minutesByDate.get(date) ?? 0) / 60 * 10) / 10}時間）`}${openInNewTab ? "、新しいタブで開く" : ""}`}
-                      className={`relative flex min-h-11 items-center justify-center rounded-lg border py-2 font-medium transition hover:opacity-80 ${densityBgClass(
-                        ratio
-                      )} ${textClass} ${ring}`}
+                      aria-label={`${formatJapaneseDate(date)}${isToday ? "、今日" : ""}、${closed ? "終日受付停止" : ratio <= 0 ? "予定なし" : `予定あり（約${Math.round((minutesByDate.get(date) ?? 0) / 60 * 10) / 10}時間）`}${openInNewTab ? "、新しいタブで開く" : ""}`}
+                      className={`relative flex min-h-11 flex-col items-center justify-center rounded-lg border py-2 font-medium transition hover:opacity-80 ${closed ? "bg-slate-200 border-slate-300" : densityBgClass(ratio)} ${textClass} ${ring}`}
                     >
                       {dayNumber}
+                      {closed && <span className="mt-0.5 text-[10px] leading-tight">受付停止</span>}
                     </Link>
                   </td>
                 );
@@ -133,6 +139,7 @@ export default async function MonthDensityCalendar({
           <span className="w-3 h-3 rounded bg-blue-900" />
           <span>混雑</span>
           <span className="ml-3">青い枠：今日</span>
+          <span className="ml-3 inline-flex items-center gap-1"><span className="h-3 w-3 rounded border border-slate-300 bg-slate-200" />終日受付停止</span>
         </div>
       )}
     </div>

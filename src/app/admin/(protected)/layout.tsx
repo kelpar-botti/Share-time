@@ -20,6 +20,7 @@ export default async function ProtectedAdminLayout({
       <header className="border-b border-gray-200 bg-white px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <Link href="/" aria-label="Share Time：カレンダーに戻る" className="flex min-h-11 items-center gap-3 font-bold text-slate-900">Share Time <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">管理画面</span></Link>
         <nav aria-label="管理画面のナビゲーション" className="flex flex-wrap items-center gap-4">
+          <Link href="/admin/availability" className="button-secondary">予定の候補・受付停止</Link>
           <Link href="/" className="button-secondary">
             通常のページに戻る
           </Link>
