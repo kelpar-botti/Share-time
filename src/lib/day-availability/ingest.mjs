@@ -3,7 +3,7 @@ import { analyzeConversation } from './conversation.mjs';
 import { DayClosureError } from './closure.mjs';
 
 export const CLARIFICATIONS = {
-  MISSING_SENDER_CONTEXT: '発言者を確認できないため、日付を選んで確認してください。',
+  MISSING_SENDER_CONTEXT: '発言者を確認できません。候補の日付と、予定が決まったかを確認してください。',
   SINGLE_SIDED_CONTEXT: '片方の発言しか確認できません。双方の合意と日付を確認してください。',
   MULTIPLE_DATES: '候補の日付が複数あります。決まった日を選んでください。',
   MULTIPLE_TIMES: '候補の時間が複数あります。予定が決まったか確認してください。',
@@ -37,6 +37,10 @@ export function validateConversation(input, now = new Date().toISOString()) {
 export async function ingestConversation({ service, input, now = new Date().toISOString(), allowHistoricalAgreement = false }) {
   const conversation = validateConversation(input, now);
   const analysis = analyzeConversation({ ...conversation, now, maxFutureDays: 365 });
+  // Raw contact/thread identifiers never reach storage. A durable, owner-scoped
+  // tombstone prevents delayed notification history from reviving an old offer.
+  const conversationKey = createHash('sha256').update(JSON.stringify([conversation.source, conversation.conversationId])).digest('hex');
+  if (analysis.invalidation) await service.supersedePendingConversation(conversationKey, analysis.invalidation.sentAt);
   if (analysis.status === 'none') return { analysis };
   const proposal = analysis.proposal;
   const last = conversation.messages.at(-1);
@@ -49,9 +53,10 @@ export async function ingestConversation({ service, input, now = new Date().toIS
   const id = `conversation_${createHash('sha256').update(JSON.stringify([conversation.source, conversation.conversationId, triggerId])).digest('hex')}`;
   const evidence = evidenceMessages.map(message => `${message.sentAt} ${message.sender === 'self' ? '自分' : message.sender === 'other' ? '相手' : '発言者不明'}: ${message.text}`).join('\n').slice(-2000);
   const suggestion = await service.createSuggestion({
-    id, dates: proposal ? [proposal.date] : [], source: conversation.source,
+    id, dates: proposal ? [proposal.date] : analysis.clarification.tentativeDates ?? [], source: conversation.source,
     summary: proposal?.summary ?? CLARIFICATIONS[analysis.clarification.reason],
     evidence, confidence: proposal ? 'high' : 'low',
+    conversationKey, contextTimestamp: evidenceMessages.at(-1)?.sentAt ?? last.sentAt,
   });
   // Return analysis, but never raw full messages. A dismissed stable ID stays dismissed.
   return { analysis, suggestion };

@@ -6,6 +6,9 @@ export type Suggestion = {
   source: 'line' | 'discord' | 'manual'; confidence: 'high' | 'medium' | 'low';
   status: 'pending' | 'accepted' | 'dismissed'; createdAt: string; updatedAt: string;
   acceptedDates?: string[]; acceptedAt?: string; existingBookingCount?: number;
+  /** A hash of source and conversation ID; never a raw contact/thread name. */
+  conversationKey?: string; contextTimestamp?: string;
+  dismissReason?: 'conversation_updated';
 };
 export class DayClosureError extends Error { code: string; constructor(code: string, message: string); }
 export class RangeUnavailableError extends DayClosureError { constructor(reason?: 'closed' | 'taken'); }
@@ -18,7 +21,8 @@ export function touchVisitorRangeGuard(transaction: Transaction, guards: Visitor
 export function createClosureService(options: { db: Firestore; ownerEmail: string; clock?: () => Date | string }): {
   getSuggestion(id: string): Promise<Suggestion>;
   listSuggestions(): Promise<Suggestion[]>;
-  createSuggestion(input: {id?: string; dates?: string[]; summary: string; evidence?: string; source: Suggestion['source']; confidence?: Suggestion['confidence']}): Promise<Suggestion>;
+  createSuggestion(input: {id?: string; dates?: string[]; summary: string; evidence?: string; source: Suggestion['source']; confidence?: Suggestion['confidence']; conversationKey?: string; contextTimestamp?: string}): Promise<Suggestion>;
+  supersedePendingConversation(conversationKey: string, beforeTimestamp: string): Promise<{changed: number}>;
   acceptSuggestion(id: string, dates?: string[]): Promise<{ suggestion: Suggestion; changed: boolean; existingBookingCount: number }>;
   dismissSuggestion(id: string): Promise<{ suggestion: Suggestion; changed: boolean }>;
   getDayAvailability(date: string): Promise<DayAvailability>;

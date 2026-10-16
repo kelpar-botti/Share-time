@@ -78,16 +78,50 @@ test('never carries date context from a different conversation', () => {
 test('unknown sender and one-sided acknowledgement require clarification', () => {
   const unknown = analyze([message('a', 'unknown', '20日に遊ぼう'), message('b', 'self', '了解')]);
   assert.equal(unknown.clarification.reason, 'MISSING_SENDER_CONTEXT');
+  assert.deepEqual(unknown.clarification.tentativeDates, ['2026-10-20']);
   const same = analyze([message('a', 'other', '20日に遊ぼう'), message('b', 'other', '了解')]);
   assert.equal(same.clarification.reason, 'SINGLE_SIDED_CONTEXT');
+  assert.deepEqual(same.clarification.tentativeDates, ['2026-10-20']);
+});
+
+test('sender uncertainty never prefills ambiguous, changed or out-of-window dates', () => {
+  for (const [offer, agreement] of [['20日か21日に遊ぼう', '了解'], ['20日に遊ぼう', '22日でOK'], ['10月1日に遊ぼう', '了解']]) {
+    const result = analyze([message('a', 'unknown', offer), message('b', 'unknown', agreement)]);
+    assert.equal(result.status, 'needs_clarification');
+    assert.equal(result.clarification.tentativeDates, undefined);
+  }
+});
+
+test('unknown senders retain a corrected date and duplicate acknowledgement never creates a new review', () => {
+  const updated = analyze([
+    message('a', 'unknown', '20日に遊ぼう'), message('b', 'unknown', '22日でOK'),
+    message('c', 'unknown', '了解'),
+  ]);
+  assert.equal(updated.clarification.reason, 'MISSING_SENDER_CONTEXT');
+  assert.deepEqual(updated.clarification.tentativeDates, ['2026-10-22']);
+  const repeated = analyze([
+    message('a', 'unknown', '20日に遊ぼう'), message('b', 'unknown', '了解'),
+    message('c', 'unknown', 'よろしく'),
+  ]);
+  assert.deepEqual(repeated.clarification.evidenceMessageIds, ['a', 'b']);
 });
 
 test('rejection and cancellation clear date context and an earlier agreement', () => {
   for (const text of ['その日は無理', 'やっぱり行けない', '予定をキャンセルします', 'それで確定じゃない']) {
-    assert.deepEqual(analyze([
+    const result = analyze([
       message('a', 'other', '20日に遊ぼう'), message('b', 'self', '了解'), message('c', 'other', text),
       message('d', 'self', '了解です'),
-    ]), { status: 'none' }, text);
+    ]);
+    assert.equal(result.status, 'none', text);
+    assert.deepEqual(result.invalidation, { sentAt: '2026-10-15T01:00:00.000Z', evidenceMessageIds: ['c'], reason: 'cancelled' });
+  }
+});
+
+test('negated cancellations and unrelated negative remarks do not emit cancellation signals', () => {
+  const before = [message('a', 'other', '20日に遊ぼう'), message('b', 'self', '了解')];
+  for (const text of ['予定はキャンセルしないよ', '中止はしません', 'キャンセルしないでね', 'この資料を読むのは嫌だね']) {
+    const result = analyze([...before, message('c', 'other', text)]);
+    assert.equal(result.invalidation, undefined, text);
   }
 });
 
@@ -101,7 +135,8 @@ test('tentative approval never produces a date proposal', () => {
 
 test('a corrected date needs a new acknowledgement, and overrides the earlier date', () => {
   const messages = [message('a', 'other', '20日に遊ぼう'), message('b', 'self', '了解'), message('c', 'other', 'やっぱり22日に変更したい')];
-  assert.deepEqual(analyze(messages), { status: 'none' });
+  assert.equal(analyze(messages).status, 'none');
+  assert.equal(analyze(messages).invalidation.reason, 'rescheduled');
   const proposal = expectProposal([...messages, message('d', 'self', 'その日で大丈夫')], '2026-10-22');
   assert.deepEqual(proposal.evidenceMessageIds, ['c', 'd']);
 });
@@ -116,7 +151,8 @@ test('a not-X-but-Y correction uses the replacement only', () => {
 
 test('a time correction invalidates approval until it is acknowledged', () => {
   const messages = [message('a', 'other', '20日14時に集合'), message('b', 'self', '了解'), message('c', 'other', 'やっぱり15時にしよう')];
-  assert.deepEqual(analyze(messages), { status: 'none' });
+  assert.equal(analyze(messages).status, 'none');
+  assert.equal(analyze(messages).invalidation.reason, 'rescheduled');
   const proposal = expectProposal([...messages, message('d', 'self', 'それでいいよ')], '2026-10-20');
   assert.deepEqual(proposal.evidenceMessageIds, ['a', 'c', 'd']);
 });
@@ -140,8 +176,20 @@ test('time choices and conditional changed times need another acknowledgement', 
 
 test('a later time negotiation without a correction keyword resets acceptance', () => {
   const messages = [message('a', 'other', '20日14時に集合'), message('b', 'self', '了解'), message('c', 'other', '15時どう？')];
-  assert.deepEqual(analyze(messages), { status: 'none' });
+  assert.equal(analyze(messages).status, 'none');
+  assert.equal(analyze(messages).invalidation.reason, 'rescheduled');
   expectProposal([...messages, message('d', 'self', 'わかった')], '2026-10-20');
+});
+
+test('a later date proposal without a correction keyword supersedes acceptance until a fresh acknowledgement', () => {
+  for (const text of ['21日はどう？', '21日に遊ぼう']) {
+    const messages = [message('a', 'other', '20日14時に集合'), message('b', 'self', '了解'), message('c', 'other', text)];
+    const result = analyze(messages);
+    assert.equal(result.status, 'none', text);
+    assert.deepEqual(result.invalidation, { sentAt: '2026-10-15T01:00:00.000Z', evidenceMessageIds: ['c'], reason: 'rescheduled' });
+    const proposal = expectProposal([...messages, message('d', 'self', '了解')], '2026-10-21');
+    assert.deepEqual(proposal.evidenceMessageIds, ['c', 'd']);
+  }
 });
 
 test('multiple candidate days are ambiguous unless the agreement chooses one explicitly', () => {

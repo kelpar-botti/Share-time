@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 const DAY_MS = 86400000;
 const GUARDS = 'dayAvailability';
 const SUGGESTIONS = 'scheduleSuggestions';
+const CONVERSATIONS = 'scheduleConversationCursors';
 const BLOCKING = new Set(['pending', 'approved']);
 
 export class DayClosureError extends Error {
@@ -96,6 +97,14 @@ function suggestionId(value) {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) throw new DayClosureError('invalid_id', '提案が見つかりません。');
   return value;
 }
+function conversationContext(key, timestamp) {
+  if (key === undefined && timestamp === undefined) return undefined;
+  if (typeof key !== 'string' || !/^[a-f0-9]{64}$/u.test(key) || typeof timestamp !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/u.test(timestamp) || !Number.isFinite(Date.parse(timestamp))) {
+    throw new DayClosureError('invalid_conversation_context', '会話の日付を確認できません。');
+  }
+  return { conversationKey: key, contextTimestamp: new Date(timestamp).toISOString() };
+}
 
 /** Authentication stays in the caller. ownerEmail must come from the server's authorized admin session. */
 export function createClosureService({ db, ownerEmail, clock = () => new Date() }) {
@@ -112,6 +121,7 @@ export function createClosureService({ db, ownerEmail, clock = () => new Date() 
     return { id: doc.id, ...data };
   };
   const getSuggestion = async id => owned(await db.collection(SUGGESTIONS).doc(suggestionId(id)).get());
+  const cursorRef = key => db.collection(CONVERSATIONS).doc(`${ownerKey}_${key}`);
   return {
     getSuggestion,
     async listSuggestions() {
@@ -126,14 +136,38 @@ export function createClosureService({ db, ownerEmail, clock = () => new Date() 
       if (!['line', 'discord', 'manual'].includes(input.source)) throw new DayClosureError('invalid_source', '取り込み元が正しくありません。');
       const confidence = input.confidence ?? 'medium';
       if (!['high', 'medium', 'low'].includes(confidence)) throw new DayClosureError('invalid_confidence', '確度が正しくありません。');
+      const context = conversationContext(input.conversationKey, input.contextTimestamp);
       const ref = db.collection(SUGGESTIONS).doc(id);
       return db.runTransaction(async transaction => {
         const snap = await transaction.get(ref);
         if (snap.exists) return owned(snap); // Client retries cannot create duplicate or reset a decision.
+        const cursor = context ? (await transaction.get(cursorRef(context.conversationKey))).data() : undefined;
+        const superseded = cursor?.invalidatedThrough && context.contextTimestamp <= cursor.invalidatedThrough;
         const timestamp = now();
-        const data = { ownerKey, dates, summary, evidence, source: input.source, confidence, status: 'pending', createdAt: timestamp, updatedAt: timestamp };
+        const data = { ownerKey, dates, summary, evidence, source: input.source, confidence,
+          ...(context ?? {}), status: superseded ? 'dismissed' : 'pending',
+          ...(superseded ? { dismissReason: 'conversation_updated' } : {}), createdAt: timestamp, updatedAt: timestamp };
         transaction.set(ref, data);
         return { id, ...data };
+      });
+    },
+    async supersedePendingConversation(conversationKey, beforeTimestamp) {
+      const context = conversationContext(conversationKey, beforeTimestamp);
+      if (!context) throw new DayClosureError('invalid_conversation_context', '会話の日付を確認できません。');
+      const ref = cursorRef(context.conversationKey);
+      return db.runTransaction(async transaction => {
+        const cursor = (await transaction.get(ref)).data();
+        // A delayed notification cannot move the tombstone backwards, nor
+        // dismiss a suggestion based on newer context in this conversation.
+        if (cursor?.invalidatedThrough && cursor.invalidatedThrough >= context.contextTimestamp) return { changed: 0 };
+        const snap = await transaction.get(db.collection(SUGGESTIONS).where('ownerKey', '==', ownerKey).where('conversationKey', '==', context.conversationKey));
+        const pending = snap.docs.map(owned).filter(item => item.status === 'pending' && item.contextTimestamp <= context.contextTimestamp);
+        const timestamp = now();
+        for (const item of pending) transaction.update(db.collection(SUGGESTIONS).doc(item.id), {
+          status: 'dismissed', dismissReason: 'conversation_updated', updatedAt: timestamp,
+        });
+        transaction.set(ref, { ownerKey, conversationKey: context.conversationKey, invalidatedThrough: context.contextTimestamp, updatedAt: timestamp });
+        return { changed: pending.length };
       });
     },
     async acceptSuggestion(id, selectedDates) {

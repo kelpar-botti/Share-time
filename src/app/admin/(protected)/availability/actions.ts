@@ -39,7 +39,9 @@ export async function analyzePastedConversation(_state: ActionState, form: FormD
       return {
         id: createHash("sha256").update(`${occurredAt}:${index}:${line}`).digest("hex"), conversationId,
         sender: match?.[1] === "相手" ? "other" : match ? "self" : "unknown",
-        text: match?.[2] ?? line, sentAt: timestamp.toISOString(),
+        // Preserve the pasted order even when the user supplies one timestamp
+        // for the whole exchange (a correction followed by a fresh agreement).
+        text: match?.[2] ?? line, sentAt: new Date(+timestamp + index).toISOString(),
       };
     });
     const result = await ingestConversation({ service: services().closures, input: { source, conversationId, messages }, allowHistoricalAgreement: true });

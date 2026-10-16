@@ -9,6 +9,7 @@ const SENDERS = new Set(['self', 'other', 'unknown']);
 const AGREEMENT = /了解|承知|わかった|わかりました|分かった|分かりました|(?:それ|その日|その時間|その日程|その予定|その日時)で(?:いい|大丈夫|お願い|OK|オッケー|決まり|確定)|(?:^|[^a-z])ok(?:$|[^a-z])|オッケー|おっけー|いいよ|いいね|大丈夫(?:です|だよ|！|!|。|$)|決まり|確定|賛成|(?:一緒に)?行こう|いこう|よろしく/iu;
 const UNCERTAIN = /たぶん|多分|かもしれ|かも|できたら|出来たら|行けたら|いけたら|仮(?:で|に|の|決|予)|未定|検討|確認(?:して|する|します)|わから|分から|どうだろ|相談(?:して|する)|まだ(?:決|わか|分か)|予定は未/;
 const REJECTION = /(?:行け|いけ|会え|でき|出来|空いて|空い)(?:ない|ません)|無理|難しい|都合が悪|やめ(?:よう|る|ます)|中止|キャンセル|取り消|取消|延期(?:し|で)|(?:了解|確定|決まり|大丈夫|いい)(?:では|じゃ)(?:ない|ありません)|(?:それ|その日|その時間)は(?:だめ|ダメ)|嫌|拒否/;
+const NEGATED_CANCELLATION = /(?:キャンセル|中止|取り消|取消)(?:は|を)?(?:しない|しません|しなく|したくない|ではない|じゃない)/;
 const EVENT = /遊|会お|会う|会い|飲も|飲み|ご飯|食事|ランチ|ディナー|映画|カラオケ|行こ|行く|行き|集合|約束|予定|予約|打ち合わせ|ミーティング|相談|訪問|デート|キャンプ|旅行|ライブ|イベント|空いて|暇|都合|どう[?？]|どうかな|にしよう|にする|でいい|でどう|でOK|でお願い|変更|ずら|延期/iu;
 const CORRECTION = /やっぱり|やはり|変更|訂正|ずら|(?:じゃなく|ではなく)|代わり|にしよう|にする/;
 const MULTI_DAY = /泊|翌日|朝まで|日付(?:を|が).*(?:また|跨)|(?:また|跨)ぐ|から.*(?:まで|にかけて)/;
@@ -21,8 +22,8 @@ function formatDate(year, month, day) {
 }
 function localDay(timestamp) { return new Date(timestamp + JST_MS).toISOString().slice(0, 10); }
 function addDays(date, days) { return new Date((dayNumber(date) + days) * DAY_MS).toISOString().slice(0, 10); }
-function clarification(reason, evidenceMessageIds = []) {
-  return { status: 'needs_clarification', clarification: { reason, evidenceMessageIds: [...new Set(evidenceMessageIds)] } };
+function clarification(reason, evidenceMessageIds = [], tentativeDates) {
+  return { status: 'needs_clarification', clarification: { reason, evidenceMessageIds: [...new Set(evidenceMessageIds)], ...(tentativeDates?.length ? { tentativeDates } : {}) } };
 }
 function timestamp(value) {
   if (typeof value !== 'string' || value.length > 40 || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) return null;
@@ -131,6 +132,10 @@ export function analyzeConversation({ conversationId, messages, now, maxFutureDa
   const today = localDay(reference);
   let candidate = null;
   let result = { status: 'none' };
+  let invalidation;
+  const invalidate = (message, reason) => {
+    invalidation = { sentAt: new Date(message.timestamp).toISOString(), evidenceMessageIds: [message.id], reason };
+  };
 
   for (const message of thread) {
     const text = message.text;
@@ -141,11 +146,20 @@ export function analyzeConversation({ conversationId, messages, now, maxFutureDa
     const hasDate = parsed.dates.length > 0 || parsed.invalid || parsed.unsupported;
     const isEvent = EVENT.test(text);
 
-    if (REJECTION.test(correctionTail(text))) {
-      // A rejection or cancellation invalidates a previously accepted date too.
-      if (candidate || hasDate || hasAgreement) { candidate = null; result = { status: 'none' }; }
+    if (REJECTION.test(correctionTail(text)) && !NEGATED_CANCELLATION.test(correctionTail(text))) {
+      // Only pending suggestions may be superseded by this signal. An owner has
+      // to reopen an already closed day themselves; chat never cancels bookings.
+      const explicitCancellation = /キャンセル|中止|取り消|取消|予定.*延期/u.test(text);
+      const contextualRejection = candidate && (hasDate || hasAgreement
+        || /その日|その時間|その予定|その日程|それは|それで|やっぱり|やはり|行けない|いけない|会えない|やめよう/u.test(text)
+        || /^(?:ごめん[、,。\s]*)?(?:無理|難しい|都合が悪い|だめ|ダメ)[。!！\s]*$/u.test(text));
+      if (explicitCancellation || contextualRejection) invalidate(message, 'cancelled');
+      if (candidate || hasDate || hasAgreement || explicitCancellation) {
+        candidate = null; result = { status: 'none' };
+      }
       continue;
     }
+    if (isCorrection && isEvent && (hasDate || timeInfo.times.length || timeInfo.invalid)) invalidate(message, 'rescheduled');
     if (candidate && hasDate && !isEvent && !hasAgreement && !isCorrection) {
       // A later date fact (e.g. 「21日は雨」) must not replace an actual
       // invitation and then turn a casual 「了解」 into a different plan.
@@ -176,41 +190,51 @@ export function analyzeConversation({ conversationId, messages, now, maxFutureDa
       continue;
     }
 
+    // An explicit new negotiation supersedes the old pending proposal even if
+    // its replacement still needs acknowledgement. Unrelated small talk does
+    // not emit a signal. A full replay keeps the effective latest change time.
+    if (candidate && ((isEvent && !hasAgreement
+        && (parsed.dates.some(date => !candidate.dates.includes(date))
+          || (timeInfo.times.length && !hasDate && timeInfo.times.some(time => !candidate.times.includes(time)))))
+      || (hasAgreement && (parsed.dates.some(date => !candidate.dates.includes(date))
+        || (candidate.times.length && timeInfo.times.some(time => !candidate.times.includes(time))))))) invalidate(message, 'rescheduled');
+
     if (hasAgreement && candidate) {
       const evidence = [...candidate.evidenceMessageIds, message.id];
-      if (result.status === 'proposal' && !isCorrection
-        && (!parsed.dates.length || (parsed.dates.length === 1 && parsed.dates[0] === result.proposal.date))
+      const selected = parsed.dates.length ? parsed.dates : candidate.dates;
+      const previousDate = result.status === 'proposal' ? result.proposal.date
+        : result.status === 'needs_clarification' && ['MISSING_SENDER_CONTEXT', 'SINGLE_SIDED_CONTEXT'].includes(result.clarification.reason)
+          ? result.clarification.tentativeDates?.[0] : undefined;
+      if (previousDate && !isCorrection
+        && (!parsed.dates.length || (parsed.dates.length === 1 && parsed.dates[0] === previousDate))
         && !timeInfo.choice && (!timeInfo.times.length || timeInfo.times.every(time => candidate.times.includes(time)))) {
         // Consecutive 「了解」「よろしく」 do not create multiple proposals for
         // the same effective agreement. The importer keys on the original ID.
         continue;
       }
-      if (message.sender === 'unknown' || candidate.sender === 'unknown') {
-        result = clarification('MISSING_SENDER_CONTEXT', evidence);
-      } else if (message.sender === candidate.sender) {
-        result = clarification('SINGLE_SIDED_CONTEXT', evidence);
-      } else {
-        const selected = parsed.dates.length ? parsed.dates : candidate.dates;
-        if (selected.length !== 1) result = clarification('MULTIPLE_DATES', evidence);
-        else if (!candidate.dates.includes(selected[0])) {
-          result = clarification('DATE_CHANGED_WITH_AGREEMENT', evidence);
-          candidate = { dates: selected, times: timeInfo.times, timeChoice: timeInfo.choice, sender: message.sender, evidenceMessageIds: evidence };
-        }
-        else if (timeInfo.choice || (candidate.timeChoice && timeInfo.times.length !== 1)) result = clarification('MULTIPLE_TIMES', evidence);
-        else if (timeInfo.times.length && candidate.times.length && timeInfo.times.some(time => !candidate.times.includes(time))) {
-          result = clarification('TIME_CHANGED_WITH_AGREEMENT', evidence);
-          candidate = { ...candidate, times: timeInfo.times, timeChoice: timeInfo.choice, sender: message.sender, evidenceMessageIds: evidence };
-        }
-        else if (dayNumber(selected[0]) < dayNumber(today) || dayNumber(selected[0]) > dayNumber(today) + maxFutureDays) result = clarification('DATE_OUTSIDE_WINDOW', evidence);
-        else {
-          const date = selected[0];
-          result = { status: 'proposal', proposal: {
-            date, scope: 'all_day', evidenceMessageIds: [...new Set(evidence)],
-            agreementMessageId: message.id, agreedBy: message.sender,
-            summary: `${Number(date.slice(5, 7))}月${Number(date.slice(8))}日の予定への同意を検知しました。この日は終日受付停止を提案します。`,
-            reason: 'AGREEMENT_WITH_DATE_CONTEXT', needsConfirmation: true,
-          } };
-        }
+      if (selected.length !== 1) result = clarification('MULTIPLE_DATES', evidence);
+      else if (!candidate.dates.includes(selected[0])) {
+        invalidate(message, 'rescheduled');
+        result = clarification('DATE_CHANGED_WITH_AGREEMENT', evidence);
+        candidate = { dates: selected, times: timeInfo.times, timeChoice: timeInfo.choice, sender: message.sender, evidenceMessageIds: evidence };
+      }
+      else if (timeInfo.choice || (candidate.timeChoice && timeInfo.times.length !== 1)) result = clarification('MULTIPLE_TIMES', evidence);
+      else if (timeInfo.times.length && candidate.times.length && timeInfo.times.some(time => !candidate.times.includes(time))) {
+        invalidate(message, 'rescheduled');
+        result = clarification('TIME_CHANGED_WITH_AGREEMENT', evidence);
+        candidate = { ...candidate, times: timeInfo.times, timeChoice: timeInfo.choice, sender: message.sender, evidenceMessageIds: evidence };
+      }
+      else if (dayNumber(selected[0]) < dayNumber(today) || dayNumber(selected[0]) > dayNumber(today) + maxFutureDays) result = clarification('DATE_OUTSIDE_WINDOW', evidence);
+      else if (message.sender === 'unknown' || candidate.sender === 'unknown') result = clarification('MISSING_SENDER_CONTEXT', evidence, selected);
+      else if (message.sender === candidate.sender) result = clarification('SINGLE_SIDED_CONTEXT', evidence, selected);
+      else {
+        const date = selected[0];
+        result = { status: 'proposal', proposal: {
+          date, scope: 'all_day', evidenceMessageIds: [...new Set(evidence)],
+          agreementMessageId: message.id, agreedBy: message.sender,
+          summary: `${Number(date.slice(5, 7))}月${Number(date.slice(8))}日の予定への同意を検知しました。この日は終日受付停止を提案します。`,
+          reason: 'AGREEMENT_WITH_DATE_CONTEXT', needsConfirmation: true,
+        } };
       }
       // Retain the date context so an explicit correction can invalidate the result,
       // but duplicate acknowledgement does not become a new opposite-side offer.
@@ -229,5 +253,5 @@ export function analyzeConversation({ conversationId, messages, now, maxFutureDa
       result = { status: 'none' };
     }
   }
-  return result;
+  return invalidation ? { ...result, invalidation } : result;
 }

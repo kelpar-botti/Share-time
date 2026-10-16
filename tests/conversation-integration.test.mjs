@@ -232,3 +232,112 @@ test('per-device request limit is enforced and resets next minute without granti
   env.setTime('2026-10-15T01:01:00Z');
   assert.equal((await call(env, token)).status, 200);
 });
+
+test('unknown notification senders prefill a single tentative date with low confidence, never an automatic closure', async () => {
+  const env = setup(); const { token } = await env.devices.issue('Android');
+  const input = conversation({ messages: conversation().messages.map(item => ({ ...item, sender: 'unknown' })) });
+  const result = await call(env, token, 'POST', input);
+  assert.equal(result.data.analysis.status, 'needs_clarification');
+  assert.deepEqual(result.data.suggestion.dates, ['2026-10-20']);
+  assert.equal(result.data.suggestion.confidence, 'low');
+  assert.match(result.data.suggestion.summary, /発言者を確認でき(?:ない|ません)/);
+  assert.equal((await getDayAvailability(env.db, '2026-10-20')).closed, false);
+});
+
+test('explicit cancellation supersedes only this conversation pending proposals, leaves dates and other conversations unchanged', async () => {
+  const env = setup(); const { token } = await env.devices.issue('Android');
+  const first = await call(env, token, 'POST', conversation());
+  const otherConversation = conversation({ conversationId: 'friend-b', messages: conversation().messages.map(item => ({ ...item, conversationId: 'friend-b' })) });
+  const other = await call(env, token, 'POST', otherConversation);
+  const otherSource = await call(env, token, 'POST', conversation({ source: 'discord' }));
+  env.setTime('2026-10-15T01:01:00Z');
+  const cancelled = await call(env, token, 'POST', conversation({ messages: [...conversation().messages, message('cancel', 'other', '予定をキャンセルします', { sentAt: '2026-10-15T01:01:00Z' })] }));
+  assert.equal(cancelled.data.analysis.status, 'none');
+  const stored = await env.closure.getSuggestion(first.data.suggestion.id);
+  assert.equal(stored.status, 'dismissed'); assert.equal(stored.dismissReason, 'conversation_updated');
+  assert.match(stored.conversationKey, /^[a-f0-9]{64}$/);
+  assert.equal(stored.contextTimestamp, '2026-10-15T01:00:00.000Z');
+  assert.equal(JSON.stringify([...env.records]).includes('friend-a'), false);
+  const queue = (await call(env, token)).data.suggestions;
+  assert.deepEqual(queue.map(item => item.id).sort(), [other.data.suggestion.id, otherSource.data.suggestion.id].sort());
+  assert.equal([...env.records.keys()].some(key => key.startsWith('dayAvailability/') || key.startsWith('bookings/')), false);
+  // An already known ID stays handled, and an unseen stale agreement ID is
+  // covered by the same durable timestamp tombstone.
+  const replay = await call(env, token, 'POST', conversation());
+  assert.equal(replay.data.suggestion.status, 'dismissed');
+  const unseenStale = await call(env, token, 'POST', conversation({ messages: [conversation().messages[0], message('old-unseen-agreement', 'self', '了解！')] }));
+  assert.equal(unseenStale.data.suggestion.status, 'dismissed');
+  assert.equal(unseenStale.data.suggestion.dismissReason, 'conversation_updated');
+});
+
+test('date or time correction removes the old pending proposal and only a fresh acknowledgement can replace it', async () => {
+  for (const [text, date] of [['やっぱり22日に変更したい', '2026-10-22'], ['やっぱり15時にしよう', '2026-10-20']]) {
+    const env = setup(); const { token } = await env.devices.issue('Android');
+    const initial = await call(env, token, 'POST', conversation());
+    const correction = message('correction', 'other', text, { sentAt: '2026-10-15T01:01:00Z' });
+    env.setTime('2026-10-15T01:01:00Z');
+    const corrected = await call(env, token, 'POST', conversation({ messages: [...conversation().messages, correction] }));
+    assert.equal(corrected.data.analysis.status, 'none');
+    assert.equal((await call(env, token)).data.suggestions.length, 0);
+    assert.equal((await env.closure.getSuggestion(initial.data.suggestion.id)).dismissReason, 'conversation_updated');
+    env.setTime('2026-10-15T01:02:00Z');
+    const agreed = await call(env, token, 'POST', conversation({ messages: [...conversation().messages, correction, message('fresh-agreement', 'self', 'それで大丈夫', { sentAt: '2026-10-15T01:02:00Z' })] }));
+    assert.equal(agreed.data.suggestion.status, 'pending');
+    assert.deepEqual(agreed.data.suggestion.dates, [date]);
+    assert.notEqual(agreed.data.suggestion.id, initial.data.suggestion.id);
+    assert.equal((await call(env, token)).data.suggestions.length, 1);
+    assert.equal([...env.records.keys()].some(key => key.startsWith('dayAvailability/')), false);
+  }
+});
+
+test('a different date proposal without correction words hides the old pending offer until a fresh acknowledgement', async () => {
+  for (const text of ['21日はどう？', '21日に遊ぼう']) {
+    const env = setup(); const { token } = await env.devices.issue('Android');
+    const initial = await call(env, token, 'POST', conversation());
+    const newOffer = message('new-date-offer', 'other', text, { sentAt: '2026-10-15T01:01:00Z' });
+    env.setTime('2026-10-15T01:01:00Z');
+    const updated = await call(env, token, 'POST', conversation({ messages: [...conversation().messages, newOffer] }));
+    assert.equal(updated.data.analysis.status, 'none');
+    assert.equal(updated.data.suggestion, undefined);
+    assert.equal((await call(env, token)).data.suggestions.length, 0);
+    assert.equal((await env.closure.getSuggestion(initial.data.suggestion.id)).dismissReason, 'conversation_updated');
+    assert.equal((await call(env, token, 'PATCH', { id: initial.data.suggestion.id, action: 'accept' })).status, 409);
+    const replay = await call(env, token, 'POST', conversation());
+    assert.equal(replay.data.suggestion.status, 'dismissed');
+    env.setTime('2026-10-15T01:02:00Z');
+    const agreed = await call(env, token, 'POST', conversation({ messages: [...conversation().messages, newOffer, message('fresh-date-agreement', 'self', '了解', { sentAt: '2026-10-15T01:02:00Z' })] }));
+    assert.equal(agreed.data.suggestion.status, 'pending');
+    assert.deepEqual(agreed.data.suggestion.dates, ['2026-10-21']);
+    assert.deepEqual((await call(env, token)).data.suggestions.map(item => item.id), [agreed.data.suggestion.id]);
+    assert.equal([...env.records.keys()].some(key => key.startsWith('dayAvailability/')), false);
+  }
+});
+
+test('ordinary later messages do not dismiss an awaiting proposal and delayed cancellation cannot dismiss newer context', async () => {
+  const env = setup(); const { token } = await env.devices.issue('Android');
+  env.setTime('2026-10-15T01:05:00Z');
+  const newer = conversation({ messages: conversation().messages.map(item => ({ ...item, sentAt: '2026-10-15T01:05:00Z' })) });
+  const initial = await call(env, token, 'POST', newer);
+  const ordinary = await call(env, token, 'POST', conversation({ messages: [message('ordinary', 'other', '写真を送ったよ', { sentAt: '2026-10-15T01:05:00Z' })] }));
+  assert.equal(ordinary.data.analysis.status, 'none');
+  assert.equal(ordinary.data.analysis.invalidation, undefined);
+  const delayed = await call(env, token, 'POST', conversation({ messages: [message('delayed-cancel', 'other', '予定をキャンセルします', { sentAt: '2026-10-15T01:03:00Z' })] }));
+  assert.equal(delayed.data.analysis.invalidation.reason, 'cancelled');
+  assert.equal((await env.closure.getSuggestion(initial.data.suggestion.id)).status, 'pending');
+  assert.equal((await call(env, token)).data.suggestions.length, 1);
+});
+
+test('chat cancellation never modifies an accepted closure or existing visitor reservations', async () => {
+  const env = setup(); const { token } = await env.devices.issue('Android');
+  env.records.set('bookings/existing', { date: '2026-10-20', startTime: '13:00', endTime: '14:00', status: 'pending', source: 'visitor' });
+  const initial = await call(env, token, 'POST', conversation());
+  await call(env, token, 'PATCH', { id: initial.data.suggestion.id, action: 'accept', dates: ['2026-10-20'] });
+  const accepted = structuredClone(await env.closure.getSuggestion(initial.data.suggestion.id));
+  const day = structuredClone(env.records.get('dayAvailability/2026-10-20'));
+  const booking = structuredClone(env.records.get('bookings/existing'));
+  env.setTime('2026-10-15T01:01:00Z');
+  await call(env, token, 'POST', conversation({ messages: [...conversation().messages, message('cancel', 'self', '予定をキャンセルします', { sentAt: '2026-10-15T01:01:00Z' })] }));
+  assert.deepEqual(await env.closure.getSuggestion(initial.data.suggestion.id), accepted);
+  assert.deepEqual(env.records.get('dayAvailability/2026-10-20'), day);
+  assert.deepEqual(env.records.get('bookings/existing'), booking);
+});

@@ -16,10 +16,16 @@ export interface ConversationProposal {
   reason: 'AGREEMENT_WITH_DATE_CONTEXT';
   needsConfirmation: true;
 }
-export type ConversationAnalysis =
+export type ConversationInvalidation = {
+  sentAt: string;
+  evidenceMessageIds: string[];
+  reason: 'cancelled' | 'rescheduled';
+};
+export type ConversationAnalysis = (
   | { status: 'none' }
   | { status: 'proposal'; proposal: ConversationProposal }
-  | { status: 'needs_clarification'; clarification: { reason: string; evidenceMessageIds: string[] } };
+  | { status: 'needs_clarification'; clarification: { reason: string; evidenceMessageIds: string[]; tentativeDates?: string[] } }
+) & { invalidation?: ConversationInvalidation };
 /** Pure conservative analysis; no message, schedule or reservation is modified. */
 export function analyzeConversation(input?: {
   conversationId: string;

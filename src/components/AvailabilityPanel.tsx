@@ -21,9 +21,10 @@ function SuggestionCard({ item, minDate, maxDate }: { item: Suggestion; minDate:
   return <article className="rounded-xl border border-slate-200 bg-white p-5">
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">{SOURCES[item.source]}</span>
-      <span className={`rounded-full px-2 py-1 ${item.status === "pending" ? "bg-amber-50 text-amber-900" : item.status === "accepted" ? "bg-blue-50 text-blue-900" : "bg-slate-100 text-slate-600"}`}>{item.status === "pending" ? "確認待ち・受付は継続中" : item.status === "accepted" ? "終日受付停止に設定済み" : "見送り・変更なし"}</span>
+      <span className={`rounded-full px-2 py-1 ${item.status === "pending" ? "bg-amber-50 text-amber-900" : item.status === "accepted" ? "bg-blue-50 text-blue-900" : "bg-slate-100 text-slate-600"}`}>{item.status === "pending" ? "確認待ち・受付は継続中" : item.status === "accepted" ? "終日受付停止に設定済み" : item.dismissReason === "conversation_updated" ? "会話の変更で取り下げ・変更なし" : "見送り・変更なし"}</span>
     </div>
     <h3 className="mt-3 font-semibold text-slate-900">{item.summary}</h3>
+    {item.status === "pending" && item.confidence === "low" ? <p className="mt-2 text-sm text-amber-800">取得できた会話だけでは合意を確認できません。日付と予定が決まったかを確認してください。</p> : null}
     <p className="mt-2 text-sm text-slate-600">{dates.length ? `${dates.join("、")} ／ 終日` : "日付の指定が必要です"}</p>
     {item.evidence ? <details className="mt-3 text-sm"><summary className="cursor-pointer text-blue-700">判断に使った会話を確認</summary><pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 font-sans text-xs leading-6 text-slate-700">{item.evidence}</pre></details> : null}
     {item.status === "pending" ? <form action={action} className="mt-4">
@@ -81,6 +82,7 @@ function DevicePairing({ devices }: { devices: CalendarDevice[] }) {
   const [state, action, pending] = useActionState(pairCalendarDevice, INITIAL);
   return <section className="rounded-xl border border-slate-200 bg-white p-5">
     <h2 className="text-lg font-bold">Androidとの連携</h2>
+    <a href="/downloads/share-time-android.apk" download className="button-primary mt-3">Androidアプリをダウンロード</a>
     <p className="mt-2 text-sm leading-6 text-slate-600">専用アプリで通知の読み取りを許可すると、LINE・Discordの合意らしい発言をきっかけに、その会話で保存した直前の文脈をShare Timeへ送ります。確認と日付変更はアプリからできます。PCの起動は不要です。</p>
     <p className="mt-2 text-sm leading-6 text-slate-600">アプリは相手のトークに参加しません。通知に含まれない過去の会話や、自分がアプリ・PCで送った返信をすべて取得することはできません。曖昧な場合は確認用の候補にします。</p>
     <details className="mt-4"><summary className="cursor-pointer text-sm font-medium text-blue-700">初回の端末設定・連携キー</summary>

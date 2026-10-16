@@ -1,0 +1,40 @@
+plugins { id 'com.android.application' }
+
+def releaseStore = System.getenv('SHARE_TIME_ANDROID_KEYSTORE')
+
+android {
+    namespace 'app.sharetime.companion'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'app.sharetime.companion'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    signingConfigs {
+        if (releaseStore) {
+            release {
+                storeFile file(releaseStore)
+                storePassword System.getenv('SHARE_TIME_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias 'sharetime'
+                keyPassword System.getenv('SHARE_TIME_ANDROID_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            debuggable false
+            minifyEnabled false
+            if (releaseStore) signingConfig signingConfigs.release
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.12.0'
+}

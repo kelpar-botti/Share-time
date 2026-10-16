@@ -212,3 +212,62 @@ test('public availability exposes only date and closed status, never conversatio
     { date: '2026-10-19', closed: false }, { date: '2026-10-20', closed: true }, { date: '2026-10-21', closed: false },
   ]);
 });
+
+test('conversation invalidation is owner scoped, monotonic and only dismisses pending older context', async () => {
+  const env = setup(); const conversationKey = 'a'.repeat(64);
+  const contextTimestamp = '2026-10-15T00:00:00Z';
+  await env.service.createSuggestion(proposal({ id: 'old_pending', conversationKey, contextTimestamp }));
+  await env.service.createSuggestion(proposal({ id: 'accepted', conversationKey, contextTimestamp }));
+  await env.service.acceptSuggestion('accepted');
+  await env.service.createSuggestion(proposal({ id: 'newer_pending', conversationKey, contextTimestamp: '2026-10-15T00:03:00Z' }));
+  const other = closure.createClosureService({ db: env.db, ownerEmail: 'other@example.test', clock: () => '2026-10-15T00:00:00Z' });
+  await other.createSuggestion(proposal({ id: 'other_owner', conversationKey, contextTimestamp }));
+  assert.deepEqual(await env.service.supersedePendingConversation(conversationKey, '2026-10-15T00:02:00Z'), { changed: 1 });
+  assert.equal((await env.service.getSuggestion('old_pending')).dismissReason, 'conversation_updated');
+  assert.equal((await env.service.getSuggestion('accepted')).status, 'accepted');
+  assert.equal((await env.service.getSuggestion('newer_pending')).status, 'pending');
+  assert.equal((await other.getSuggestion('other_owner')).status, 'pending');
+  assert.deepEqual(await env.service.supersedePendingConversation(conversationKey, '2026-10-15T00:01:00Z'), { changed: 0 });
+  const delayed = await env.service.createSuggestion(proposal({ id: 'delayed', conversationKey, contextTimestamp }));
+  assert.equal(delayed.status, 'dismissed');
+  assert.equal((await env.service.getDayAvailability('2026-10-20')).closed, true);
+});
+
+test('half supplied or malformed internal conversation metadata cannot bypass timestamp tombstones', async () => {
+  const env = setup();
+  for (const metadata of [{ conversationKey: 'a'.repeat(64) }, { contextTimestamp: '2026-10-15T00:00:00Z' }, { conversationKey: 'contact-name', contextTimestamp: '2026-10-15T00:00:00Z' }, { conversationKey: 'a'.repeat(64), contextTimestamp: 'invalid' }]) {
+    await assert.rejects(env.service.createSuggestion(proposal(metadata)), { code: 'invalid_conversation_context' });
+  }
+  assert.equal((await env.service.listSuggestions()).length, 0);
+});
+
+test('proposal creation retries around a cancellation cursor and cannot persist stale pending state', async () => {
+  const env = setup(); const conversationKey = 'b'.repeat(64); let injected = false;
+  env.db.beforeCommit = writes => {
+    if (!injected && writes.some(write => write.ref.path === 'scheduleSuggestions/delayed')) {
+      injected = true;
+      const ownerKey = writes.find(write => write.ref.path === 'scheduleSuggestions/delayed').data.ownerKey;
+      env.records.set(`scheduleConversationCursors/${ownerKey}_${conversationKey}`, { ownerKey, conversationKey, invalidatedThrough: '2026-10-15T00:02:00.000Z' });
+    }
+  };
+  const delayed = await env.service.createSuggestion(proposal({ id: 'delayed', conversationKey, contextTimestamp: '2026-10-15T00:00:00Z' }));
+  assert.equal(env.attempts, 2);
+  assert.equal(delayed.status, 'dismissed'); assert.equal(delayed.dismissReason, 'conversation_updated');
+  assert.equal((await env.service.getDayAvailability('2026-10-20')).closed, false);
+});
+
+test('conversation invalidation retries around a competing owner confirmation and preserves the accepted day', async () => {
+  const env = setup(); const conversationKey = 'c'.repeat(64); let injected = false;
+  const item = await env.service.createSuggestion(proposal({ conversationKey, contextTimestamp: '2026-10-15T00:00:00Z' }));
+  env.db.beforeCommit = writes => {
+    if (!injected && writes.some(write => write.ref.path.startsWith('scheduleConversationCursors/'))) {
+      injected = true;
+      env.records.set(`scheduleSuggestions/${item.id}`, { ...env.records.get(`scheduleSuggestions/${item.id}`), status: 'accepted', acceptedDates: ['2026-10-20'] });
+      env.records.set('dayAvailability/2026-10-20', { date: '2026-10-20', closed: true, proposalIds: [item.id], revision: 1 });
+    }
+  };
+  assert.deepEqual(await env.service.supersedePendingConversation(conversationKey, '2026-10-15T00:02:00Z'), { changed: 0 });
+  assert.equal(env.attempts, 3);
+  assert.equal((await env.service.getSuggestion(item.id)).status, 'accepted');
+  assert.equal((await env.service.getDayAvailability('2026-10-20')).closed, true);
+});
