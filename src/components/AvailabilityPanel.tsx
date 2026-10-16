@@ -14,7 +14,9 @@ function Feedback({ state }: { state: ActionState }) {
 }
 
 function SuggestionCard({ item, minDate, maxDate }: { item: Suggestion; minDate: string; maxDate: string }) {
-  const [state, action, pending] = useActionState(reviewSuggestion, INITIAL);
+  const [state, action, accepting] = useActionState(reviewSuggestion.bind(null, "accept"), INITIAL);
+  const [dismissState, dismissAction, dismissing] = useActionState(reviewSuggestion.bind(null, "dismiss"), INITIAL);
+  const pending = accepting || dismissing;
   const dates = item.acceptedDates ?? item.dates;
   return <article className="rounded-xl border border-slate-200 bg-white p-5">
     <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -31,11 +33,12 @@ function SuggestionCard({ item, minDate, maxDate }: { item: Suggestion; minDate:
       </label>
       <p className="mt-2 text-xs leading-5 text-slate-500">確定すると、その日は新しい予約を受け付けません。すでにある予定は残ります。見送り・未操作では変更しません。</p>
       <div className="mt-3 flex flex-wrap gap-3">
-        <button type="submit" name="decision" value="accept" disabled={pending} className="button-primary disabled:opacity-50">{pending ? "処理中…" : "この日を終日受付停止にする"}</button>
-        <button type="submit" name="decision" value="dismiss" disabled={pending} className="button-secondary disabled:opacity-50">見送る（何もしない）</button>
+        <button type="submit" disabled={pending} className="button-primary disabled:opacity-50">{pending ? "処理中…" : "この日を終日受付停止にする"}</button>
+        <button type="submit" formAction={dismissAction} disabled={pending} className="button-secondary disabled:opacity-50">見送る（何もしない）</button>
       </div>
     </form> : null}
     <Feedback state={state} />
+    <Feedback state={dismissState} />
   </article>;
 }
 

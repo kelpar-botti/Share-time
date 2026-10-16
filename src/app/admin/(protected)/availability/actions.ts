@@ -61,11 +61,10 @@ export async function createManualSuggestion(_state: ActionState, form: FormData
   } catch (error) { return failure(error); }
 }
 
-export async function reviewSuggestion(_state: ActionState, form: FormData): Promise<ActionState> {
+export async function reviewSuggestion(decision: "accept" | "dismiss", _state: ActionState, form: FormData): Promise<ActionState> {
   await requireAdmin();
   try {
     const id = string(form, "id");
-    const decision = string(form, "decision");
     if (decision === "dismiss") {
       await services().closures.dismissSuggestion(id);
       refresh();
